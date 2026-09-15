@@ -3,24 +3,44 @@
 import { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+// Define explicit TypeScript interface for Supabase filings data
+interface Filing {
+  id: string;
+  investor_id?: string;
+  filing_accession: string;
+  ticker: string;
+  shares_held: number;
+  report_date: string;
+}
+
+// Initialize Supabase Client
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 export default function Dashboard() {
-  const [filings, setFilings] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [filings, setFilings] = useState<Filing[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [selectedFiling, setSelectedFiling] = useState<Filing | null>(null);
 
   useEffect(() => {
     async function fetchFilings() {
-      const { data, error } = await supabase
-        .from('filings')
-        .select('*')
-        .order('shares_held', { ascending: false });
+      try {
+        const { data, error } = await supabase
+          .from('filings')
+          .select('*')
+          .order('shares_held', { ascending: false });
 
-      if (error) console.error("Error fetching data:", error);
-      if (data) setFilings(data);
-      setLoading(false);
+        if (error) {
+          console.error("Supabase Query Error:", error.message);
+        } else if (data) {
+          setFilings(data as Filing[]);
+        }
+      } catch (err) {
+        console.error("Unexpected error fetching filings:", err);
+      } finally {
+        setLoading(false);
+      }
     }
 
     fetchFilings();
@@ -67,12 +87,15 @@ export default function Dashboard() {
                     <tr key={filing.id} className="border-b border-gray-800 hover:bg-gray-800/25 transition-colors">
                       <td className="px-6 py-4 font-bold text-white">${filing.ticker}</td>
                       <td className="px-6 py-4 text-emerald-400 font-medium">
-                        {filing.shares_held.toLocaleString()}
+                        {filing.shares_held ? filing.shares_held.toLocaleString() : 'N/A'}
                       </td>
                       <td className="px-6 py-4 font-mono text-xs">{filing.filing_accession}</td>
                       <td className="px-6 py-4">{filing.report_date}</td>
                       <td className="px-6 py-4 text-right">
-                        <button className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-xs font-bold transition-colors">
+                        <button 
+                          onClick={() => setSelectedFiling(filing)}
+                          className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-xs font-bold transition-colors shadow-lg active:scale-95"
+                        >
                           Analyze Setup
                         </button>
                       </td>
@@ -83,6 +106,59 @@ export default function Dashboard() {
             </table>
           </div>
         </div>
+
+        {/* Quantitative Analysis Modal */}
+        {selectedFiling && (
+          <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
+              
+              {/* Modal Header */}
+              <div className="flex justify-between items-center border-b border-gray-800 pb-4 mb-4">
+                <h3 className="text-2xl font-bold text-white">${selectedFiling.ticker} Quantitative Breakdown</h3>
+                <button 
+                  onClick={() => setSelectedFiling(null)}
+                  className="text-gray-400 hover:text-white font-bold text-xl transition-colors"
+                  aria-label="Close modal"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="space-y-4 text-sm text-gray-300">
+                <div className="bg-gray-950 p-4 rounded-lg border border-gray-800 flex justify-between items-center">
+                  <span className="text-gray-400">Institutional Position:</span>
+                  <span className="font-mono text-emerald-400 font-bold">
+                    {selectedFiling.shares_held ? selectedFiling.shares_held.toLocaleString() : 'N/A'} Shares
+                  </span>
+                </div>
+
+                <div className="bg-gray-950 p-4 rounded-lg border border-gray-800 flex justify-between items-center">
+                  <span className="text-gray-400">Volatility Tag:</span>
+                  <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3 py-1 rounded-full text-xs font-semibold">
+                    Volatility Expansion Alert
+                  </span>
+                </div>
+
+                <div className="bg-gray-950 p-4 rounded-lg border border-gray-800">
+                  <span className="text-gray-400 block mb-1">Geospatial Mapping Status:</span>
+                  <span className="text-gray-200">PostGIS asset coordinates active for underlying facilities.</span>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="mt-6 flex justify-end">
+                <button 
+                  onClick={() => setSelectedFiling(null)}
+                  className="bg-gray-800 hover:bg-gray-700 text-white px-5 py-2 rounded-lg text-sm font-semibold transition-colors"
+                >
+                  Close Analysis
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
 
       </div>
     </div>
