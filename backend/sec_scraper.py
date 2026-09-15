@@ -7,67 +7,84 @@ from edgar import set_identity, Company
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
-# Load environment variables
+# 1. Load & Validate Environment Variables
 load_dotenv()
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("CRITICAL: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in your .env file.")
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Mandatory SEC Identity to prevent IP bans
+# Mandatory SEC Identity header to prevent IP throttle/bans
 set_identity("System Admin admin@uyologistics.com")
 
-def calculate_volatility(ticker: str):
-    """Calculates annualized 90-day volatility."""
+
+def calculate_volatility(ticker: str) -> float | None:
+    """Calculates annualized 90-day volatility for a given ticker using Yahoo Finance."""
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="90d")
-        if hist.empty: return None
+        
+        if hist.empty or len(hist) < 10:
+            return None
         
         hist['Returns'] = hist['Close'].pct_change()
         vol_90d = hist['Returns'].std() * np.sqrt(252)
-        return round(vol_90d * 100, 2)
+        
+        if np.isnan(vol_90d):
+            return None
+            
+        return round(float(vol_90d * 100), 2)
     except Exception as e:
-        print(f"Volatility error for {ticker}: {e}")
+        print(f"⚠️ Volatility calculation error for {ticker}: {e}")
         return None
 
+
 def fetch_berkshire_filings():
-    print("Connecting to SEC EDGAR API for Berkshire Hathaway...")
-    company = Company("0001067983") # Warren Buffett's CIK
+    print("📡 Connecting to SEC EDGAR API for Berkshire Hathaway (CIK: 0001067983)...")
+    company = Company("0001067983")
     
     filings_collection = company.get_filings(form="13F-HR")
     
     if not filings_collection:
-        print("No recent 13F filings found.")
+        print("❌ No recent 13F filings found.")
         return
 
     filing = filings_collection[0]
     holdings = filing.obj().holdings
     
-    # Standardize all columns to lowercase to prevent case-sensitivity errors
+    # Standardize column headers to lowercase to prevent key errors
     holdings.columns = holdings.columns.str.lower()
     
-    print(f"\nFiling found! Processing top 5 holdings to respect API limits...")
+    print(f"📄 Filing found ({filing.accession_no})! Processing top holdings...")
     
     for index, row in holdings.head(5).iterrows():
-        # Use the newly discovered clean columns
-        ticker = str(row['ticker']).strip()
-        shares = int(float(row['sharesprnamount']))
+        ticker = str(row['ticker']).strip().upper()
         
-        # Skip if the asset doesn't have a public ticker (e.g., private bonds/cash)
+        # Skip unlisted or non-equity assets
         if ticker.lower() == 'nan' or not ticker:
             print(f"\nSkipping unlisted asset: {row.get('issuer', 'Unknown')}")
             continue
-            
-        print(f"\nAnalyzing: {ticker} | Shares: {shares:,}")
+
+        try:
+            shares = int(float(row['sharesprnamount']))
+        except (ValueError, TypeError):
+            print(f"⚠️ Invalid share count for {ticker}, skipping.")
+            continue
         
-        # 1. Calculate Volatility
+        print("\n--------------------------------------------------")
+        print(f"🔍 Analyzing Ticker: ${ticker} | Shares: {shares:,}")
+        
+        # 1. Calculate 90-Day Volatility
         vol_90d = calculate_volatility(ticker)
-        if vol_90d:
-            print(f"Calculated 90-day Volatility: {vol_90d}%")
+        if vol_90d is not None:
+            print(f"📈 90-Day Annualized Volatility: {vol_90d}%")
         else:
-            print("Could not calculate volatility (likely an unlisted or fixed-income asset).")
+            print("⚠️ Volatility unavailable (unlisted or fixed-income asset).")
         
-        # 2. Push to Supabase Filings Table
+        # 2. Synchronize Data with Supabase
         filing_data = {
             "filing_accession": filing.accession_no,
             "ticker": ticker,
@@ -76,17 +93,39 @@ def fetch_berkshire_filings():
         }
         
         try:
-            supabase.table("filings").insert(filing_data).execute()
-            print(f"✅ Successfully inserted {ticker} into Supabase!")
-        except Exception as e:
-            # Check if it failed because it's a duplicate (our SQL unique constraint working)
-            if 'duplicate key value' in str(e):
-                print(f"⚠️ {ticker} already exists in database (Deduplication successful).")
-            else:
-                print(f"❌ Database insert failed for {ticker}: {e}")
+            # Upsert into 'filings' table (Inserts new row or updates existing, returning full record)
+            filing_response = supabase.table("filings").upsert(
+                filing_data,
+                on_conflict="filing_accession, ticker"
+            ).execute()
             
-        # Crucial: Sleep to avoid Yahoo Finance rate limits
+            if filing_response.data and len(filing_response.data) > 0:
+                filing_id = filing_response.data[0]['id']
+                print(f"✅ Indexed filing for ${ticker} (ID: {filing_id})")
+
+                # Upsert into 'metrics' table referencing the filing_id
+                if vol_90d is not None:
+                    metric_data = {
+                        "filing_id": filing_id,
+                        "ticker": ticker,
+                        "volatility_90d": vol_90d
+                    }
+                    supabase.table("metrics").upsert(
+                        metric_data,
+                        on_conflict="filing_id, ticker"
+                    ).execute()
+                    print(f"✅ Upserted 90-day volatility metric ({vol_90d}%) into database!")
+            else:
+                print(f"⚠️ Could not retrieve filing record ID for ${ticker}.")
+
+        except Exception as e:
+            print(f"❌ Database synchronization failed for ${ticker}: {e}")
+            
+        # Rate-limiting sleep to prevent Yahoo Finance API thorttling
         time.sleep(1.5)
+
+    print("\n🎉 Scraping and data synchronization completed successfully!")
+
 
 if __name__ == "__main__":
     fetch_berkshire_filings()
