@@ -3,17 +3,20 @@
 import { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-// Define explicit TypeScript interface for Supabase filings data
+// Relational TypeScript interfaces
+interface Metric {
+  volatility_90d: number | null;
+}
+
 interface Filing {
   id: string;
-  investor_id?: string;
   filing_accession: string;
   ticker: string;
   shares_held: number;
   report_date: string;
+  metrics?: Metric[];
 }
 
-// Initialize Supabase Client
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -26,9 +29,10 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchFilings() {
       try {
+        // Relational query joining filings with volatility metrics
         const { data, error } = await supabase
           .from('filings')
-          .select('*')
+          .select('*, metrics(volatility_90d)')
           .order('shares_held', { ascending: false });
 
         if (error) {
@@ -118,7 +122,6 @@ export default function Dashboard() {
                 <button 
                   onClick={() => setSelectedFiling(null)}
                   className="text-gray-400 hover:text-white font-bold text-xl transition-colors"
-                  aria-label="Close modal"
                 >
                   ✕
                 </button>
@@ -133,10 +136,26 @@ export default function Dashboard() {
                   </span>
                 </div>
 
+                {/* Real Volatility Display */}
                 <div className="bg-gray-950 p-4 rounded-lg border border-gray-800 flex justify-between items-center">
-                  <span className="text-gray-400">Volatility Tag:</span>
-                  <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3 py-1 rounded-full text-xs font-semibold">
-                    Volatility Expansion Alert
+                  <span className="text-gray-400">90-Day Volatility ($\sigma$):</span>
+                  <span className="font-mono text-blue-400 font-bold">
+                    {selectedFiling.metrics?.[0]?.volatility_90d 
+                      ? `${selectedFiling.metrics[0].volatility_90d}%` 
+                      : 'Calculating...'}
+                  </span>
+                </div>
+
+                <div className="bg-gray-950 p-4 rounded-lg border border-gray-800 flex justify-between items-center">
+                  <span className="text-gray-400">Volatility Profile:</span>
+                  <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${
+                    (selectedFiling.metrics?.[0]?.volatility_90d || 0) > 30 
+                      ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' 
+                      : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                  }`}>
+                    {(selectedFiling.metrics?.[0]?.volatility_90d || 0) > 30 
+                      ? 'High Volatility / Expansion Alert' 
+                      : 'Moderate Volatility / Consolidation'}
                   </span>
                 </div>
 
