@@ -19,7 +19,6 @@ export default function AssetMap({ ticker }: { ticker: string }) {
   const [zoom, setZoom] = useState(4);
 
   // MVP Spatial Mock: Maps ticker symbols to primary corporate facility coordinates
-  // This will be replaced by a direct PostGIS ST_AsGeoJSON() query to your corporate_assets table
   useEffect(() => {
     const locations: Record<string, [number, number]> = {
       'AAPL': [37.3346, -122.0090], // Apple Park, Cupertino
@@ -38,9 +37,10 @@ export default function AssetMap({ ticker }: { ticker: string }) {
   return (
     <div className="h-64 w-full rounded-lg overflow-hidden border border-gray-800 relative z-0">
       <MapContainer center={position} zoom={zoom} style={{ height: '100%', width: '100%' }}>
+        {/* Switched to Esri Dark Gray Canvas - No API Key Required */}
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://carto.com/">CARTO</a>'
+          url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+          attribution='&copy; Esri &mdash; Esri, DeLorme, NAVTEQ'
         />
         <Marker position={position} icon={icon}>
           <Popup className="text-gray-900 font-bold">
