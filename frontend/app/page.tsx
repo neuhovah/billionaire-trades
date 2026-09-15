@@ -2,6 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import dynamic from 'next/dynamic';
+
+// Dynamically import the map to prevent Server-Side Rendering (SSR) window errors
+const AssetMap = dynamic(() => import('../components/AssetMap'), { 
+  ssr: false,
+  loading: () => (
+    <div className="h-64 w-full bg-gray-900 animate-pulse rounded-lg border border-gray-800 flex items-center justify-center text-gray-500 text-xs font-mono">
+      Initializing Spatial Engine...
+    </div>
+  )
+});
 
 // Relational TypeScript interfaces
 interface Metric {
@@ -113,8 +124,8 @@ export default function Dashboard() {
 
         {/* Quantitative Analysis Modal */}
         {selectedFiling && (
-          <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-            <div className="bg-gray-900 border border-gray-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
+          <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative my-8">
               
               {/* Modal Header */}
               <div className="flex justify-between items-center border-b border-gray-800 pb-4 mb-4">
@@ -159,9 +170,10 @@ export default function Dashboard() {
                   </span>
                 </div>
 
+                {/* Interactive Leaflet Spatial Mapping */}
                 <div className="bg-gray-950 p-4 rounded-lg border border-gray-800">
-                  <span className="text-gray-400 block mb-1">Geospatial Mapping Status:</span>
-                  <span className="text-gray-200">PostGIS asset coordinates active for underlying facilities.</span>
+                  <span className="text-gray-400 block mb-3 font-semibold">Geospatial Asset Tracking:</span>
+                  <AssetMap ticker={selectedFiling.ticker} />
                 </div>
               </div>
 
