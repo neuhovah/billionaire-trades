@@ -149,7 +149,7 @@ export default function Dashboard() {
 
                 {/* Real Volatility Display */}
                 <div className="bg-gray-950 p-4 rounded-lg border border-gray-800 flex justify-between items-center">
-                  <span className="text-gray-400">90-Day Volatility ($\sigma$):</span>
+                  <span className="text-gray-400">90-Day Volatility (σ):</span>
                   <span className="font-mono text-blue-400 font-bold">
                     {selectedFiling.metrics?.[0]?.volatility_90d 
                       ? `${selectedFiling.metrics[0].volatility_90d}%` 
