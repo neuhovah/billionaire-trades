@@ -37,10 +37,10 @@ export default function AssetMap({ ticker }: { ticker: string }) {
   return (
     <div className="h-64 w-full rounded-lg overflow-hidden border border-gray-800 relative z-0">
       <MapContainer center={position} zoom={zoom} style={{ height: '100%', width: '100%' }}>
-        {/* Switched to Esri Dark Gray Canvas - No API Key Required */}
+        {/* CARTO Dark Matter Basemap with dedicated BillionairesTrade project API key */}
         <TileLayer
-          url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
-          attribution='&copy; Esri &mdash; Esri, DeLorme, NAVTEQ'
+          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_25zt_2_57452e5f8a955dc884556706"
+          attribution='&copy; <a href="https://carto.com/">CARTO</a> &mdash; &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         />
         <Marker position={position} icon={icon}>
           <Popup className="text-gray-900 font-bold">
