@@ -8,7 +8,7 @@ import dynamic from 'next/dynamic';
 const AssetMap = dynamic(() => import('../components/AssetMap'), { 
   ssr: false,
   loading: () => (
-    <div className="h-64 w-full bg-gray-900 animate-pulse rounded-lg border border-gray-800 flex items-center justify-center text-gray-500 text-xs font-mono">
+    <div className="h-48 w-full bg-gray-900 animate-pulse rounded-lg border border-gray-800 flex items-center justify-center text-gray-500 text-xs font-mono">
       Initializing Spatial Engine...
     </div>
   )
@@ -74,7 +74,7 @@ export default function Dashboard() {
       <div className="max-w-7xl mx-auto">
         
         {/* Header */}
-        <div className="mb-10 border-b border-gray-800 pb-6 flex justify-between items-end">
+        <div className="mb-8 border-b border-gray-800 pb-6 flex justify-between items-end">
           <div>
             <h1 className="text-4xl font-bold text-white tracking-tight">BillionaireTrades</h1>
             <p className="text-gray-400 mt-2 text-lg">Institutional Alpha, SEC Disclosures & Multi-Region Tracking</p>
@@ -141,13 +141,13 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Quantitative Analysis Modal */}
+        {/* Quantitative Analysis Modal (Fixed Height Shell with Internal Scroll) */}
         {selectedFiling && (
-          <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
-            <div className="bg-gray-900 border border-gray-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative my-8">
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative max-h-[90vh] flex flex-col">
               
-              {/* Modal Header */}
-              <div className="flex justify-between items-center border-b border-gray-800 pb-4 mb-4">
+              {/* Modal Header (Fixed Pin) */}
+              <div className="flex justify-between items-center border-b border-gray-800 pb-4 mb-4 flex-shrink-0">
                 <div>
                   <h3 className="text-2xl font-bold text-white">${selectedFiling.ticker} Quantitative Breakdown</h3>
                   <p className="text-xs text-gray-400 mt-1">
@@ -162,79 +162,82 @@ export default function Dashboard() {
                 </button>
               </div>
 
-              {/* Modal Body */}
-              <div className="space-y-4 text-sm text-gray-300">
-                <div className="bg-gray-950 p-4 rounded-lg border border-gray-800 flex justify-between items-center">
-                  <span className="text-gray-400">Institutional Position:</span>
-                  <span className="font-mono text-emerald-400 font-bold text-base">
-                    {selectedFiling.shares_held ? selectedFiling.shares_held.toLocaleString() : 'N/A'} Shares
-                  </span>
-                </div>
+              {/* Modal Body (Scrollable Container) */}
+              <div className="space-y-4 text-sm text-gray-300 overflow-y-auto pr-1 flex-1">
+                
+                {/* 3-Column Consolidated Quantitative Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800 flex flex-col justify-between">
+                    <span className="text-gray-400 text-xs">Institutional Position:</span>
+                    <span className="font-mono text-emerald-400 font-bold text-base mt-1">
+                      {selectedFiling.shares_held ? selectedFiling.shares_held.toLocaleString() : 'N/A'}
+                    </span>
+                  </div>
 
-                {/* Real Volatility Display */}
-                <div className="bg-gray-950 p-4 rounded-lg border border-gray-800 flex justify-between items-center">
-                  <span className="text-gray-400">90-Day Volatility (σ):</span>
-                  <span className="font-mono text-blue-400 font-bold text-base">
-                    {selectedFiling.metrics?.[0]?.volatility_90d 
-                      ? `${selectedFiling.metrics[0].volatility_90d}%` 
-                      : 'Calculating...'}
-                  </span>
-                </div>
+                  <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800 flex flex-col justify-between">
+                    <span className="text-gray-400 text-xs">90-Day Volatility (σ):</span>
+                    <span className="font-mono text-blue-400 font-bold text-base mt-1">
+                      {selectedFiling.metrics?.[0]?.volatility_90d 
+                        ? `${selectedFiling.metrics[0].volatility_90d}%` 
+                        : 'Calculating...'}
+                    </span>
+                  </div>
 
-                <div className="bg-gray-950 p-4 rounded-lg border border-gray-800 flex justify-between items-center">
-                  <span className="text-gray-400">Volatility Profile:</span>
-                  <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${
-                    (selectedFiling.metrics?.[0]?.volatility_90d || 0) > 30 
-                      ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' 
-                      : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                  }`}>
-                    {(selectedFiling.metrics?.[0]?.volatility_90d || 0) > 30 
-                      ? 'High Volatility / Expansion Alert' 
-                      : 'Moderate Volatility / Consolidation'}
-                  </span>
+                  <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800 flex flex-col justify-between">
+                    <span className="text-gray-400 text-xs mb-1">Volatility Profile:</span>
+                    <span className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border text-center ${
+                      (selectedFiling.metrics?.[0]?.volatility_90d || 0) > 30 
+                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' 
+                        : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                    }`}>
+                      {(selectedFiling.metrics?.[0]?.volatility_90d || 0) > 30 
+                        ? 'High Volatility' 
+                        : 'Moderate Volatility'}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Interactive Leaflet Spatial Mapping */}
-                <div className="bg-gray-950 p-4 rounded-lg border border-gray-800">
-                  <span className="text-gray-400 block mb-3 font-semibold">Geospatial Asset Tracking:</span>
+                <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800">
+                  <span className="text-gray-400 block mb-2 font-semibold text-xs">Geospatial Asset Tracking:</span>
                   <AssetMap ticker={selectedFiling.ticker} />
                 </div>
 
                 {/* Verified Broker Execution Panel */}
-                <div className="bg-gray-950 p-4 rounded-lg border border-gray-800">
-                  <div className="flex justify-between items-center mb-3">
-                    <span className="text-gray-400 font-semibold">Verified Execution Brokers:</span>
+                <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800">
+                  <div className="flex justify-between items-center mb-2.5">
+                    <span className="text-gray-400 font-semibold text-xs">Verified Execution Brokers:</span>
                     <span className="text-[10px] uppercase font-mono bg-blue-900/40 text-blue-400 border border-blue-800/40 px-2 py-0.5 rounded">
                       Direct Market Access
                     </span>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-2.5">
                     {/* International Brokers */}
                     <a 
                       href="https://www.interactivebrokers.com" 
                       target="_blank" 
                       rel="noopener noreferrer"
-                      className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-blue-500/50 p-3 rounded-lg flex flex-col transition-all group"
+                      className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-blue-500/50 p-2.5 rounded-lg flex flex-col transition-all group"
                     >
                       <div className="flex justify-between items-center">
                         <span className="text-white font-bold text-xs group-hover:text-blue-400 transition-colors">Interactive Brokers</span>
-                        <span className="text-[10px] text-gray-500 font-mono">GLOBAL</span>
+                        <span className="text-[9px] text-gray-500 font-mono">GLOBAL</span>
                       </div>
-                      <span className="text-gray-400 text-[11px] mt-1">US & Global Equities / Fractional Shares</span>
+                      <span className="text-gray-400 text-[10px] mt-0.5">US & Global Equities</span>
                     </a>
 
                     <a 
                       href="https://www.xtb.com" 
                       target="_blank" 
                       rel="noopener noreferrer"
-                      className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-emerald-500/50 p-3 rounded-lg flex flex-col transition-all group"
+                      className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-emerald-500/50 p-2.5 rounded-lg flex flex-col transition-all group"
                     >
                       <div className="flex justify-between items-center">
                         <span className="text-white font-bold text-xs group-hover:text-emerald-400 transition-colors">XTB Global</span>
-                        <span className="text-[10px] text-gray-500 font-mono">GLOBAL</span>
+                        <span className="text-[9px] text-gray-500 font-mono">GLOBAL</span>
                       </div>
-                      <span className="text-gray-400 text-[11px] mt-1">Low-Commission Equity Execution</span>
+                      <span className="text-gray-400 text-[10px] mt-0.5">Low-Commission Execution</span>
                     </a>
 
                     {/* Regional / Local Brokers */}
@@ -242,34 +245,34 @@ export default function Dashboard() {
                       href="https://www.stanbicibtcstockbrokers.com" 
                       target="_blank" 
                       rel="noopener noreferrer"
-                      className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-purple-500/50 p-3 rounded-lg flex flex-col transition-all group"
+                      className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-purple-500/50 p-2.5 rounded-lg flex flex-col transition-all group"
                     >
                       <div className="flex justify-between items-center">
                         <span className="text-white font-bold text-xs group-hover:text-purple-400 transition-colors">Stanbic IBTC Securities</span>
-                        <span className="text-[10px] text-gray-500 font-mono">REGIONAL</span>
+                        <span className="text-[9px] text-gray-500 font-mono">REGIONAL</span>
                       </div>
-                      <span className="text-gray-400 text-[11px] mt-1">NGX & African Market Execution</span>
+                      <span className="text-gray-400 text-[10px] mt-0.5">NGX & African Execution</span>
                     </a>
 
                     <a 
                       href="https://www.cardinalstone.com" 
                       target="_blank" 
                       rel="noopener noreferrer"
-                      className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-amber-500/50 p-3 rounded-lg flex flex-col transition-all group"
+                      className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-amber-500/50 p-2.5 rounded-lg flex flex-col transition-all group"
                     >
                       <div className="flex justify-between items-center">
                         <span className="text-white font-bold text-xs group-hover:text-amber-400 transition-colors">CardinalStone</span>
-                        <span className="text-[10px] text-gray-500 font-mono">REGIONAL</span>
+                        <span className="text-[9px] text-gray-500 font-mono">REGIONAL</span>
                       </div>
-                      <span className="text-gray-400 text-[11px] mt-1">Institutional Brokerage Services</span>
+                      <span className="text-gray-400 text-[10px] mt-0.5">Institutional Brokerage</span>
                     </a>
                   </div>
                 </div>
 
               </div>
 
-              {/* Modal Footer */}
-              <div className="mt-6 flex justify-end">
+              {/* Modal Footer (Fixed Pin) */}
+              <div className="mt-4 pt-3 border-t border-gray-800 flex justify-end flex-shrink-0">
                 <button 
                   onClick={() => setSelectedFiling(null)}
                   className="bg-gray-800 hover:bg-gray-700 text-white px-5 py-2 rounded-lg text-sm font-semibold transition-colors"
