@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
+import { useParams } from 'next/navigation';
 
 const AssetMap = dynamic(() => import('../../../components/AssetMap'), { 
   ssr: false,
@@ -14,20 +15,26 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-export default function InvestorDeepDive({ params }: { params: { slug: string } }) {
+export default function InvestorDeepDive() {
+  const params = useParams();
+  const slug = params?.slug as string;
+
   const [investor, setInvestor] = useState<any>(null);
   const [filings, setFilings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedFiling, setSelectedFiling] = useState<any>(null);
 
   useEffect(() => {
+    // Guard clause: Wait until the slug is fully resolved by Next.js before querying Supabase
+    if (!slug) return;
+
     async function fetchData() {
       try {
-        // 1. Fetch the specific investor using the URL slug
+        // 1. Fetch the specific investor using the resolved URL slug
         const { data: investorData, error: invError } = await supabase
           .from('investors')
           .select('*')
-          .eq('slug', params.slug)
+          .eq('slug', slug)
           .single();
 
         if (invError) throw invError;
@@ -53,7 +60,7 @@ export default function InvestorDeepDive({ params }: { params: { slug: string } 
     }
 
     fetchData();
-  }, [params.slug]);
+  }, [slug]);
 
   if (loading) {
     return <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center font-mono">Loading Institutional Data...</div>;
