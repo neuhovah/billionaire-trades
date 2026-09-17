@@ -42,19 +42,23 @@ export default function AssetMap({ ticker }: { ticker: string }) {
       }
     }
 
-    // Static fallback coordinate dictionary for instant client rendering
+    // Enterprise Fallback Coordinate Dictionary for Global & African Assets
     const fallbackLocations: Record<string, [number, number]> = {
-      'DANGCEM.LG': [7.9214, 7.8821], // Obajana Cement Plant, Kogi State
-      'AAPL': [37.3346, -122.0090],  // Apple Park, Cupertino
-      'BAC': [35.2271, -80.8431],    // Bank of America Center, Charlotte
-      'KO': [33.7710, -84.3963],     // Coca-Cola HQ, Atlanta
-      'AXP': [40.7130, -74.0146],    // American Express Tower, NYC
-      'GOOGL': [37.4221, -122.0841]  // Googleplex, Mountain View
+      'DANGCEM.LG': [7.9214, 7.8821],    // Obajana Cement Plant, Kogi State
+      'TRANSCORP.LG': [6.4531, 3.3958],   // Transcorp Group HQ, Lagos, Nigeria
+      'UBA.LG': [6.4281, 3.4219],         // UBA Head Office, Marina, Lagos
+      'GEREGU.LG': [6.5244, 3.3792],      // Geregu Power Plant, Lagos
+      'FBNH.LG': [6.4474, 3.4223],        // First Bank HQ, Lagos
+      'AAPL': [37.3346, -122.0090],       // Apple Park, Cupertino
+      'BAC': [35.2271, -80.8431],         // Bank of America Center, Charlotte
+      'KO': [33.7710, -84.3963],          // Coca-Cola HQ, Atlanta
+      'AXP': [40.7130, -74.0146],         // American Express Tower, NYC
+      'GOOGL': [37.4221, -122.0841]       // Googleplex, Mountain View
     };
 
     if (fallbackLocations[ticker]) {
       setPosition(fallbackLocations[ticker]);
-      setZoom(ticker === 'DANGCEM.LG' ? 14 : 12);
+      setZoom(ticker === 'DANGCEM.LG' ? 14 : 13);
     }
 
     fetchSpatialMetadata();
