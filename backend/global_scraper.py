@@ -1,5 +1,6 @@
 import os
 import time
+import requests
 import numpy as np
 import yfinance as yf
 from datetime import datetime
@@ -19,6 +20,38 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # SEC Identity (Required for compliant EDGAR scraping)
 set_identity("Nsikan Eno Uso-essien admin@uyologistics.com")
+
+# Telegram VIP Channel Webhook Configuration
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8741660812:AAGccC3tdY0EPOzceQSjQBHWb-a-4JcKVrk")
+TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "-1004333022620")
+
+def send_institutional_alert(ticker: str, shares: int, vol_90d: float, report_date: str, accession_no: str):
+    """Fires real-time institutional filing alerts directly to the VIP Telegram Channel."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    
+    message = (
+        f"🚨 *Institutional Filing Alert*\n\n"
+        f"🏢 *Asset:* `${ticker}`\n"
+        f"📊 *Shares Held:* `{shares:,}`\n"
+        f"📈 *90-Day Volatility:* `{vol_90d}%`\n"
+        f"📅 *Report Date:* `{report_date}`\n"
+        f"🔗 *Accession:* `{accession_no}`"
+    )
+    
+    payload = {
+        "chat_id": TELEGRAM_CHANNEL_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code == 200:
+            print(f"  📢 Telegram alert successfully broadcasted to VIP channel for ${ticker}.")
+        else:
+            print(f"  ❌ Telegram API Error: {response.text}")
+    except Exception as e:
+        print(f"  ❌ Connection Failed: {e}")
 
 def calculate_volatility(ticker: str) -> float:
     """
@@ -130,7 +163,7 @@ def fetch_regional_proxy_holdings(slug: str):
     return regional_alpha_map.get(slug, [])
 
 def process_and_sync_holdings(investor_id, investor_name, ticker, shares, report_date, accession_no):
-    """Handles the universal database upsert for both SEC and Regional data."""
+    """Handles the universal database upsert for both SEC and Regional data, and triggers mobile alerts."""
     print(f"  🔍 Analyzing {ticker} | Shares: {shares:,}")
     vol_90d = calculate_volatility(ticker)
     
@@ -156,6 +189,10 @@ def process_and_sync_holdings(investor_id, investor_name, ticker, shares, report
                 on_conflict="filing_id, ticker"
             ).execute()
             print(f"  ✅ Indexed successfully.")
+            
+            # 🚀 Trigger Real-Time VIP Telegram Channel Webhook
+            send_institutional_alert(ticker, shares, vol_90d, report_date, accession_no)
+            
     except Exception as e:
         print(f"  ❌ Sync failed for {ticker}: {e}")
 

@@ -40,13 +40,13 @@ export default function InvestorDeepDive() {
         if (invError) throw invError;
         setInvestor(investorData);
 
-        // 2. Fetch only their specific portfolio holdings
+        // 2. Fetch all portfolio holdings ordered by report date and share volume
         if (investorData) {
           const { data: filingsData, error: filError } = await supabase
             .from('filings')
             .select('*, metrics(volatility_90d)')
             .eq('investor_id', investorData.id)
-            .order('shares_held', { ascending: false });
+            .order('report_date', { ascending: false });
           
           if (!filError && filingsData) {
             setFilings(filingsData);
@@ -90,11 +90,11 @@ export default function InvestorDeepDive() {
           </div>
         </div>
 
-        {/* Portfolio Table */}
+        {/* Portfolio Table with QoQ Vector Diffing */}
         <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-2xl">
           <div className="px-6 py-4 border-b border-gray-800 bg-gray-900/50 flex justify-between items-center">
-            <h2 className="text-xl font-semibold text-gray-200">Current Portfolio Holdings</h2>
-            <span className="text-xs font-mono text-gray-500">{filings.length} Assets Found</span>
+            <h2 className="text-xl font-semibold text-gray-200">Current Portfolio Holdings & QoQ Vectors</h2>
+            <span className="text-xs font-mono text-gray-500">{filings.length} Filings Tracked</span>
           </div>
           
           <div className="overflow-x-auto">
@@ -102,7 +102,8 @@ export default function InvestorDeepDive() {
               <thead className="bg-gray-800/50 text-xs uppercase text-gray-400 font-semibold">
                 <tr>
                   <th className="px-6 py-4">Ticker</th>
-                  <th className="px-6 py-4">Shares Acquired</th>
+                  <th className="px-6 py-4">Shares Held</th>
+                  <th className="px-6 py-4">QoQ Vector</th>
                   <th className="px-6 py-4">Report Date</th>
                   <th className="px-6 py-4">Accession No.</th>
                   <th className="px-6 py-4 text-right">Action</th>
@@ -111,29 +112,55 @@ export default function InvestorDeepDive() {
               <tbody>
                 {filings.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
                       Awaiting SEC/Regional Filing Data for this Portfolio.
                     </td>
                   </tr>
                 ) : (
-                  filings.map((filing) => (
-                    <tr key={filing.id} className="border-b border-gray-800 hover:bg-gray-800/25 transition-colors">
-                      <td className="px-6 py-4 font-bold text-blue-400">${filing.ticker}</td>
-                      <td className="px-6 py-4 text-emerald-400 font-medium font-mono">
-                        {filing.shares_held ? filing.shares_held.toLocaleString() : 'N/A'}
-                      </td>
-                      <td className="px-6 py-4 font-mono text-xs">{filing.report_date}</td>
-                      <td className="px-6 py-4 font-mono text-xs text-gray-500">{filing.filing_accession}</td>
-                      <td className="px-6 py-4 text-right">
-                        <button 
-                          onClick={() => setSelectedFiling(filing)}
-                          className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-xs font-bold transition-colors shadow-lg active:scale-95"
-                        >
-                          Analyze Setup
-                        </button>
-                      </td>
-                    </tr>
-                  ))
+                  filings.map((filing) => {
+                    // Find a previous historical filing for the exact same ticker to compute QoQ diff
+                    const prevFiling = filings.find(
+                      (f) => f.ticker === filing.ticker && f.id !== filing.id && f.report_date < filing.report_date
+                    );
+
+                    let diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-blue-950 text-blue-400 border border-blue-900">BASE</span>;
+                    
+                    if (prevFiling && prevFiling.shares_held) {
+                      const diff = filing.shares_held - prevFiling.shares_held;
+                      const pct = ((diff / prevFiling.shares_held) * 100).toFixed(1);
+                      if (diff > 0) {
+                        diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">+{pct}% ADDED</span>;
+                      } else if (diff < 0) {
+                        diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20">{pct}% TRIMMED</span>;
+                      } else {
+                        diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-800 text-gray-400 border border-gray-700">UNCHANGED</span>;
+                      }
+                    } else {
+                      diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-purple-500/10 text-purple-400 border border-purple-500/20">NEW POSITION</span>;
+                    }
+
+                    return (
+                      <tr key={filing.id} className="border-b border-gray-800 hover:bg-gray-800/25 transition-colors">
+                        <td className="px-6 py-4 font-bold text-blue-400">${filing.ticker}</td>
+                        <td className="px-6 py-4 text-emerald-400 font-medium font-mono">
+                          {filing.shares_held ? filing.shares_held.toLocaleString() : 'N/A'}
+                        </td>
+                        <td className="px-6 py-4">
+                          {diffBadge}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-xs">{filing.report_date}</td>
+                        <td className="px-6 py-4 font-mono text-xs text-gray-500">{filing.filing_accession}</td>
+                        <td className="px-6 py-4 text-right">
+                          <button 
+                            onClick={() => setSelectedFiling(filing)}
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-xs font-bold transition-colors shadow-lg active:scale-95"
+                          >
+                            Analyze Setup
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
