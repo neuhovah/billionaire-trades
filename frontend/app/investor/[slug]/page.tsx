@@ -21,16 +21,16 @@ export default function InvestorDeepDive() {
 
   const [investor, setInvestor] = useState<any>(null);
   const [filings, setFilings] = useState<any[]>([]);
+  const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedFiling, setSelectedFiling] = useState<any>(null);
 
   useEffect(() => {
-    // Guard clause: Wait until the slug is fully resolved by Next.js before querying Supabase
     if (!slug) return;
 
     async function fetchData() {
       try {
-        // 1. Fetch the specific investor using the resolved URL slug
+        // 1. Fetch Investor Profile
         const { data: investorData, error: invError } = await supabase
           .from('investors')
           .select('*')
@@ -40,17 +40,24 @@ export default function InvestorDeepDive() {
         if (invError) throw invError;
         setInvestor(investorData);
 
-        // 2. Fetch all portfolio holdings ordered by report date and share volume
         if (investorData) {
+          // 2. Fetch Current State (Filings + Provenance Metrics)
           const { data: filingsData, error: filError } = await supabase
             .from('filings')
-            .select('*, metrics(volatility_90d)')
+            .select('*, metrics(volatility_90d, vol_is_estimated)')
             .eq('investor_id', investorData.id)
-            .order('report_date', { ascending: false });
+            .order('shares_held', { ascending: false });
           
-          if (!filError && filingsData) {
-            setFilings(filingsData);
-          }
+          if (!filError && filingsData) setFilings(filingsData);
+
+          // 3. Fetch Append-Only History for QoQ Diffing
+          const { data: historyData, error: histError } = await supabase
+            .from('holdings_history')
+            .select('ticker, shares_held, period_of_report')
+            .eq('investor_id', investorData.id)
+            .order('period_of_report', { ascending: false });
+            
+          if (!histError && historyData) setHistory(historyData);
         }
       } catch (err) {
         console.error("Data Fetch Error:", err);
@@ -113,14 +120,14 @@ export default function InvestorDeepDive() {
                 {filings.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
-                      Awaiting SEC/Regional Filing Data for this Portfolio.
+                      Awaiting Verified Regulatory Data for this Portfolio.
                     </td>
                   </tr>
                 ) : (
                   filings.map((filing) => {
-                    // Find a previous historical filing for the exact same ticker to compute QoQ diff
-                    const prevFiling = filings.find(
-                      (f) => f.ticker === filing.ticker && f.id !== filing.id && f.report_date < filing.report_date
+                    // Find immediate previous quarter using the new history state
+                    const prevFiling = history.find(
+                      (h) => h.ticker === filing.ticker && h.period_of_report < filing.report_date
                     );
 
                     let diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-blue-950 text-blue-400 border border-blue-900">BASE</span>;
@@ -149,7 +156,7 @@ export default function InvestorDeepDive() {
                           {diffBadge}
                         </td>
                         <td className="px-6 py-4 font-mono text-xs">{filing.report_date}</td>
-                        <td className="px-6 py-4 font-mono text-xs text-gray-500">{filing.filing_accession}</td>
+                        <td className="px-6 py-4 font-mono text-xs text-gray-500 truncate max-w-[150px]">{filing.filing_accession}</td>
                         <td className="px-6 py-4 text-right">
                           <button 
                             onClick={() => setSelectedFiling(filing)}
@@ -178,7 +185,7 @@ export default function InvestorDeepDive() {
                   {/* Data Provenance Badge */}
                   <div className="mt-2 inline-flex items-center gap-2 text-[10px] uppercase font-mono bg-gray-950 border border-gray-800 text-gray-400 px-2.5 py-1 rounded">
                     <span className="text-emerald-500">●</span> 
-                    Position Data: {investor.market === 'US Equities' ? 'SEC EDGAR 13F-HR' : 'Regional Proxy Estimate'} 
+                    Position Data: {selectedFiling.data_source === 'sec_edgar' ? <span className="text-emerald-400">VERIFIED: SEC 13F-HR</span> : 'MANUAL ENTRY'} 
                     <span className="mx-1 text-gray-600">|</span> 
                     As Of: {selectedFiling.report_date}
                   </div>
@@ -202,12 +209,17 @@ export default function InvestorDeepDive() {
                   
                   {/* Volatility Metric with Transparency Tooltip */}
                   <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800 flex flex-col justify-between relative group">
-                    <span className="text-gray-400 text-xs flex justify-between">
+                    <span className="text-gray-400 text-xs flex justify-between items-center">
                       90-Day Volatility (σ):
                       <span className="text-[9px] text-gray-600 font-mono">SOURCE: YF</span>
                     </span>
-                    <span className="font-mono text-blue-400 font-bold text-base mt-1">
-                      {selectedFiling.metrics?.[0]?.volatility_90d ? `${selectedFiling.metrics[0].volatility_90d}%` : 'Calculating...'}
+                    <span className="font-mono text-blue-400 font-bold text-base mt-1 flex items-center">
+                      {selectedFiling.metrics?.[0]?.volatility_90d ? `${selectedFiling.metrics[0].volatility_90d}%` : 'N/A'}
+                      {selectedFiling.metrics?.[0]?.vol_is_estimated && (
+                        <span className="text-[8px] text-amber-500 font-mono border border-amber-500/30 bg-amber-500/10 px-1 py-0.5 rounded ml-2 uppercase">
+                          Estimated
+                        </span>
+                      )}
                     </span>
                     <div className="absolute hidden group-hover:block -top-8 left-0 bg-gray-800 text-xs px-2 py-1 rounded border border-gray-700 w-full z-10 text-center shadow-lg">
                       Calculated via Yahoo Finance Market API
