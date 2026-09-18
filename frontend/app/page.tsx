@@ -20,30 +20,60 @@ interface Investor {
   cik?: string;
 }
 
+interface InsiderTransaction {
+  id: string;
+  reporting_owner: string;
+  ticker: string;
+  transaction_code: string;
+  shares: number;
+  price_per_share: number;
+  total_value: number;
+  transaction_date: string;
+  filing_accession: string;
+}
+
+interface ActivistStake {
+  id: string;
+  reporting_owner: string;
+  target_company: string;
+  filing_type: string;
+  filing_date: string;
+  filing_accession: string;
+}
+
 export default function GlobalHub() {
   const [investors, setInvestors] = useState<Investor[]>([]);
+  const [insiderTrades, setInsiderTrades] = useState<InsiderTransaction[]>([]);
+  const [activistStakes, setActivistStakes] = useState<ActivistStake[]>([]);
+  
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [marketFilter, setMarketFilter] = useState<'ALL' | 'SEC_VERIFIED' | 'REGIONAL'>('ALL');
+  const [activeTab, setActiveTab] = useState<'MANAGERS' | 'SIGNALS'>('MANAGERS');
 
   useEffect(() => {
-    async function fetchInvestors() {
+    async function fetchDashboardData() {
       try {
-        const { data, error } = await supabase
-          .from('investors')
-          .select('*')
-          .order('name');
+        // Fetch Investors, Insider Trades, and Activist Stakes concurrently
+        const [investorsRes, insidersRes, activistsRes] = await Promise.all([
+          supabase.from('investors').select('*').order('name'),
+          supabase.from('insider_transactions').select('*').order('transaction_date', { ascending: false }).limit(15),
+          supabase.from('activist_stakes').select('*').order('filing_date', { ascending: false }).limit(15)
+        ]);
 
-        if (error) throw error;
-        if (data) setInvestors(data as Investor[]);
+        if (investorsRes.error) throw investorsRes.error;
+        if (investorsRes.data) setInvestors(investorsRes.data as Investor[]);
+        if (insidersRes.data) setInsiderTrades(insidersRes.data as InsiderTransaction[]);
+        if (activistsRes.data) setActivistStakes(activistStakesRes => activistsRes.data as ActivistStake[]);
+
       } catch (err) {
-        console.error("Error fetching investors:", err);
+        console.error("Error loading institutional dashboard data:", err);
       } finally {
         setLoading(false);
       }
     }
 
-    fetchInvestors();
+    fetchDashboardData();
   }, []);
 
   // Filter Logic across Search Query and Market Verification Tier
@@ -86,12 +116,12 @@ export default function GlobalHub() {
                 Institutional Terminal v1.0
               </span>
               <span className="text-xs font-mono text-gray-500">
-                SEC EDGAR 13F & Form 4 Active
+                SEC EDGAR 13F, Form 4 & 13D/G Active
               </span>
             </div>
             <h1 className="text-4xl md:text-5xl font-extrabold text-white tracking-tight">BillionairesTrade</h1>
             <p className="text-gray-400 mt-2 text-base md:text-lg font-light">
-              Verified Institutional Disclosure Network & Real-Time Signal Engine
+              Verified Institutional Disclosure Network & Real-Time Signal Stream
             </p>
           </div>
 
@@ -106,72 +136,210 @@ export default function GlobalHub() {
           </div>
         </div>
 
-        {/* Global Search Bar and Market Filter Controls */}
+        {/* Navigation View Tabs & Global Search */}
         <div className="bg-gray-900/80 border border-gray-800 p-4 rounded-2xl space-y-4 md:space-y-0 md:flex md:items-center md:justify-between md:gap-4 shadow-xl">
           
-          {/* Real-time Search Input */}
-          <div className="relative flex-1">
-            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-500">
-              🔍
-            </div>
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search by manager name, strategy, region, or market..."
-              className="w-full bg-gray-950 border border-gray-800 focus:border-blue-500 text-sm text-gray-200 pl-10 pr-4 py-2.5 rounded-xl font-mono placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-            />
-            {searchTerm && (
-              <button
-                onClick={() => setSearchTerm('')}
-                className="absolute inset-y-0 right-0 pr-3 flex items-center text-xs font-mono text-gray-500 hover:text-white"
-              >
-                CLEAR
-              </button>
-            )}
+          {/* View Toggle Tabs */}
+          <div className="flex items-center gap-2 font-mono text-xs">
+            <button
+              onClick={() => setActiveTab('MANAGERS')}
+              className={`px-4 py-2.5 rounded-xl transition-all border ${
+                activeTab === 'MANAGERS'
+                  ? 'bg-blue-600 text-white border-blue-500 font-bold shadow-md'
+                  : 'bg-gray-950 text-gray-400 border-gray-800 hover:text-white'
+              }`}
+            >
+              🏢 Tracked Managers ({investors.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('SIGNALS')}
+              className={`px-4 py-2.5 rounded-xl transition-all border flex items-center gap-2 ${
+                activeTab === 'SIGNALS'
+                  ? 'bg-emerald-600 text-white border-emerald-500 font-bold shadow-md'
+                  : 'bg-gray-950 text-gray-400 border-gray-800 hover:text-white'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              ⚡ Live Signals Feed ({insiderTrades.length + activistStakes.length})
+            </button>
           </div>
 
-          {/* Filter Pills */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 font-mono text-xs">
-            <button
-              onClick={() => setMarketFilter('ALL')}
-              className={`px-3.5 py-2 rounded-xl transition-all whitespace-nowrap border ${
-                marketFilter === 'ALL'
-                  ? 'bg-blue-600 text-white border-blue-500 font-bold'
-                  : 'bg-gray-950 text-gray-400 border-gray-800 hover:text-white'
-              }`}
-            >
-              All Tracked ({investors.length})
-            </button>
-            <button
-              onClick={() => setMarketFilter('SEC_VERIFIED')}
-              className={`px-3.5 py-2 rounded-xl transition-all whitespace-nowrap border flex items-center gap-1.5 ${
-                marketFilter === 'SEC_VERIFIED'
-                  ? 'bg-emerald-600 text-white border-emerald-500 font-bold'
-                  : 'bg-gray-950 text-gray-400 border-gray-800 hover:text-white'
-              }`}
-            >
-              <span className="text-emerald-400">●</span> SEC Verified ({secVerifiedCount})
-            </button>
-            <button
-              onClick={() => setMarketFilter('REGIONAL')}
-              className={`px-3.5 py-2 rounded-xl transition-all whitespace-nowrap border ${
-                marketFilter === 'REGIONAL'
-                  ? 'bg-purple-600 text-white border-purple-500 font-bold'
-                  : 'bg-gray-950 text-gray-400 border-gray-800 hover:text-white'
-              }`}
-            >
-              Regional / Pending
-            </button>
-          </div>
+          {/* Conditional Controls based on active tab */}
+          {activeTab === 'MANAGERS' ? (
+            <div className="flex flex-col md:flex-row items-center gap-3 flex-1 justify-end">
+              {/* Real-time Search Input */}
+              <div className="relative w-full md:w-72">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-500">
+                  🔍
+                </div>
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search managers..."
+                  className="w-full bg-gray-950 border border-gray-800 focus:border-blue-500 text-sm text-gray-200 pl-10 pr-4 py-2 rounded-xl font-mono placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                />
+              </div>
+
+              {/* Filter Pills */}
+              <div className="flex items-center gap-2 font-mono text-xs w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
+                <button
+                  onClick={() => setMarketFilter('ALL')}
+                  className={`px-3.5 py-2 rounded-xl transition-all whitespace-nowrap border ${
+                    marketFilter === 'ALL'
+                      ? 'bg-gray-800 text-white border-gray-700 font-bold'
+                      : 'bg-gray-950 text-gray-400 border-gray-800 hover:text-white'
+                  }`}
+                >
+                  All ({investors.length})
+                </button>
+                <button
+                  onClick={() => setMarketFilter('SEC_VERIFIED')}
+                  className={`px-3.5 py-2 rounded-xl transition-all whitespace-nowrap border ${
+                    marketFilter === 'SEC_VERIFIED'
+                      ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800 font-bold'
+                      : 'bg-gray-950 text-gray-400 border-gray-800 hover:text-white'
+                  }`}
+                >
+                  SEC Verified ({secVerifiedCount})
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="font-mono text-xs text-gray-400">
+              Streaming real-time Form 4 Insider Trades & 13D/G Activist Stakes directly from SEC EDGAR.
+            </div>
+          )}
         </div>
 
         {/* Content Render Area */}
         {loading ? (
           <div className="flex justify-center items-center h-64 bg-gray-900/40 border border-gray-800/60 rounded-2xl">
             <div className="text-gray-500 font-mono animate-pulse text-sm">
-              Connecting to Institutional Registry...
+              Connecting to Institutional Registry & Signal Stream...
             </div>
+          </div>
+        ) : activeTab === 'SIGNALS' ? (
+          /* LIVE SIGNALS STREAM VIEW */
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            
+            {/* Form 4 Real-Time Insider Transactions Column */}
+            <div className="space-y-4">
+              <div className="flex justify-between items-center bg-gray-900 border border-gray-800 px-5 py-3 rounded-xl">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>🟢 Form 4 Insider Trades</span>
+                </h2>
+                <span className="text-xs font-mono bg-blue-950 text-blue-400 border border-blue-800 px-2.5 py-1 rounded">
+                  {insiderTrades.length} Events
+                </span>
+              </div>
+
+              {insiderTrades.length === 0 ? (
+                <div className="text-center py-12 bg-gray-900/40 border border-gray-800 rounded-2xl">
+                  <p className="text-gray-500 font-mono text-xs">No Form 4 insider signals recorded yet.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {insiderTrades.map((tx) => {
+                    const isBuy = tx.transaction_code === 'P';
+                    return (
+                      <div key={tx.id} className="bg-gray-900 border border-gray-800 p-5 rounded-xl hover:border-gray-700 transition-all space-y-3">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="text-xs font-mono text-gray-400">{tx.reporting_owner}</span>
+                            <h3 className="text-lg font-bold text-white font-mono mt-0.5">${tx.ticker}</h3>
+                          </div>
+                          <span className={`text-[10px] font-mono px-2 py-1 rounded border font-bold ${
+                            isBuy ? 'bg-emerald-950 text-emerald-400 border-emerald-800' : 'bg-red-950 text-red-400 border-red-800'
+                          }`}>
+                            {isBuy ? '🟢 OPEN MARKET BUY' : '🔴 OPEN MARKET SELL'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 pt-2 border-t border-gray-800/80 font-mono text-xs">
+                          <div>
+                            <span className="text-gray-500 block text-[10px]">SHARES</span>
+                            <span className="text-gray-200 font-bold">{tx.shares?.toLocaleString()}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 block text-[10px]">AVG PRICE</span>
+                            <span className="text-gray-200 font-bold">${tx.price_per_share?.toFixed(2)}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 block text-[10px]">TOTAL VALUE</span>
+                            <span className="text-emerald-400 font-bold">${tx.total_value?.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex justify-between items-center pt-2 text-[11px] font-mono text-gray-500">
+                          <span>Date: {tx.transaction_date}</span>
+                          <a
+                            href={`https://www.sec.gov/edgar/browse/?CIK=${tx.filing_accession}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-400 hover:underline flex items-center gap-1"
+                          >
+                            SEC Filing →
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* 13D/G Activist Stakes Column */}
+            <div className="space-y-4">
+              <div className="flex justify-between items-center bg-gray-900 border border-gray-800 px-5 py-3 rounded-xl">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>🔥 13D/G Activist & Passive Stakes</span>
+                </h2>
+                <span className="text-xs font-mono bg-purple-950 text-purple-400 border border-purple-800 px-2.5 py-1 rounded">
+                  {activistStakes.length} Filings
+                </span>
+              </div>
+
+              {activistStakes.length === 0 ? (
+                <div className="text-center py-12 bg-gray-900/40 border border-gray-800 rounded-2xl">
+                  <p className="text-gray-500 font-mono text-xs">No activist stake filings recorded yet.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {activistStakes.map((stake) => {
+                    const isActivist = stake.filing_type?.includes('13D');
+                    return (
+                      <div key={stake.id} className="bg-gray-900 border border-gray-800 p-5 rounded-xl hover:border-gray-700 transition-all space-y-3">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="text-xs font-mono text-gray-400">{stake.reporting_owner}</span>
+                            <h3 className="text-lg font-bold text-white mt-0.5">{stake.target_company}</h3>
+                          </div>
+                          <span className={`text-[10px] font-mono px-2 py-1 rounded border font-bold ${
+                            isActivist ? 'bg-amber-950 text-amber-400 border-amber-800' : 'bg-blue-950 text-blue-400 border-blue-800'
+                          }`}>
+                            {stake.filing_type} {isActivist ? '• ACTIVIST INTENT' : '• PASSIVE STAKE'}
+                          </span>
+                        </div>
+
+                        <div className="flex justify-between items-center pt-3 border-t border-gray-800/80 font-mono text-xs text-gray-400">
+                          <span>Filing Date: {stake.filing_date}</span>
+                          <a
+                            href={`https://www.sec.gov/edgar/browse/?CIK=${stake.filing_accession}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-400 hover:underline flex items-center gap-1 font-bold"
+                          >
+                            Verify on EDGAR →
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
           </div>
         ) : filteredInvestors.length === 0 ? (
           <div className="text-center py-16 bg-gray-900/40 border border-gray-800 rounded-2xl">
@@ -184,6 +352,7 @@ export default function GlobalHub() {
             </button>
           </div>
         ) : (
+          /* MANAGERS DIRECTORY VIEW */
           <div className="space-y-10">
             {['North America', 'Europe', 'Asia-Pacific', 'Africa', 'Middle East & Emerging'].map((region) => {
               const regionInvestors = groupedInvestors[region];
