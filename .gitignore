@@ -19,3 +19,4 @@ frontend/out/
 # Operating System
 .DS_Store
 Thumbs.db
+backend/pipeline_log.txt
