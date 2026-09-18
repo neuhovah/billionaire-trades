@@ -4,10 +4,10 @@ import requests
 import pandas as pd
 from edgar import set_identity, Company
 from supabase import create_client, Client
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-# Load Environment Variables
-load_dotenv()
+# Automatically locate and load .env from the project root directory
+load_dotenv(find_dotenv())
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") # Strict write access
 
@@ -83,6 +83,10 @@ def run_form4_pipeline():
                 
                 # Parse the Form 4 XML into structured data
                 form4 = filing.obj()
+                
+                # FIX: Gracefully skip legacy non-XML or unparseable Form 4 filings to avoid future edgartools exceptions
+                if form4 is None:
+                    continue
                 
                 # Extract Issuer Ticker safely
                 ticker = getattr(form4, 'issuer', 'UNKNOWN')
