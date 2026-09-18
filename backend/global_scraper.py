@@ -3,13 +3,13 @@ import time
 import requests
 import numpy as np
 import yfinance as yf
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 from edgar import set_identity, Company
 from supabase import create_client, Client
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-# Load Environment Variables
-load_dotenv()
+# Automatically locate and load .env from the project root directory
+load_dotenv(find_dotenv())
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 # STRICT REQUIREMENT: Must use Service Role Key to bypass RLS for backend writing
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") 
@@ -22,21 +22,20 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # SEC Identity (Required for compliant EDGAR scraping)
 set_identity("Nsikan Eno Uso-essien admin@uyologistics.com")
 
-# Telegram VIP Channel Webhook Configuration (No hardcoded fallbacks allowed)
+# Telegram VIP Channel Webhook Configuration
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID")
 
 if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
     raise ValueError("CRITICAL: Telegram credentials missing. Update .env file.")
 
-def send_delta_alert(investor_name: str, ticker: str, current_shares: int, prev_shares: int, report_date: str):
+def send_delta_alert(investor_name: str, ticker: str, current_shares: int, prev_shares: int, report_date: str, sec_url: str):
     """Fires a Telegram alert ONLY when a position size changes quarter-over-quarter."""
     if current_shares == prev_shares:
         return  # Suppress alert for completely unchanged positions
 
     if prev_shares == 0:
         action = "🟢 NEW POSITION"
-        change_pct = "N/A"
     else:
         diff = current_shares - prev_shares
         pct = (diff / prev_shares) * 100
@@ -44,17 +43,19 @@ def send_delta_alert(investor_name: str, ticker: str, current_shares: int, prev_
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     message = (
-        f"🚨 *Institutional Delta Alert: {investor_name}*\n\n"
+        f"🚨 *Institutional 13F Delta: {investor_name}*\n\n"
         f"🏢 *Asset:* `${ticker}`\n"
         f"⚡ *Action:* `{action}`\n"
         f"📊 *Current Shares:* `{current_shares:,}` (was {prev_shares:,})\n"
-        f"📅 *Period:* `{report_date}`"
+        f"📅 *Period:* `{report_date}`\n\n"
+        f"🔗 *Verify SEC EDGAR Filing:*\n{sec_url}"
     )
     
     payload = {
         "chat_id": TELEGRAM_CHANNEL_ID,
         "text": message,
-        "parse_mode": "Markdown"
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True
     }
     
     try:
@@ -84,7 +85,7 @@ def get_real_volatility(ticker: str):
         print(f"  ⚠️ Volatility calculation error for {ticker}: {e}")
         return None
 
-def process_sec_filing(investor_id, investor_name, filing):
+def process_sec_filing(investor_id, investor_name, cik, filing):
     """Parses a valid 13F filing with strict filtering for pure long equity common stock."""
     try:
         holdings = filing.obj().holdings
@@ -98,6 +99,16 @@ def process_sec_filing(investor_id, investor_name, filing):
             
         report_date = str(filing.period_of_report)
         accession_no = filing.accession_no
+        
+        # Build Direct SEC Verification Link
+        clean_accession = accession_no.replace("-", "")
+        sec_url = f"https://www.sec.gov/Archives/edgar/data/{str(cik).lstrip('0')}/{clean_accession}/{accession_no}-index.html"
+        
+        # Protect against Historical Drift: Do not broadcast alerts for filings older than 90 days
+        filing_date_obj = datetime.strptime(str(filing.filing_date), "%Y-%m-%d")
+        is_historical = filing_date_obj < (datetime.now() - timedelta(days=90))
+        if is_historical:
+            print(f"  🕰️ Historical filing detected ({filing.filing_date}). Ingesting data but suppressing Telegram alerts.")
         
         # 2. AGGREGATE: Group by ticker to sum shares (handles multi-manager overlapping rows)
         agg_holdings = holdings.groupby('ticker')['sharesprnamount'].sum().reset_index()
@@ -151,8 +162,9 @@ def process_sec_filing(investor_id, investor_name, filing):
                     "vol_is_estimated": is_estimated
                 }, on_conflict="filing_id, ticker").execute()
 
-            # 7. FIRE WEBHOOK: Only alert if the position changed QoQ
-            send_delta_alert(investor_name, ticker, shares, prev_shares, report_date)
+            # 7. FIRE WEBHOOK: Only alert if position changed AND it's a recent filing
+            if not is_historical:
+                send_delta_alert(investor_name, ticker, shares, prev_shares, report_date, sec_url)
             
     except Exception as e:
         print(f"  ❌ Error processing portfolio for {investor_name}: {e}")
@@ -189,7 +201,7 @@ def run_pipeline():
             all_filings.sort(key=lambda x: str(x.period_of_report), reverse=True)
             latest_filing = all_filings[0]
             
-            process_sec_filing(investor['id'], investor['name'], latest_filing)
+            process_sec_filing(investor['id'], investor['name'], investor['cik'], latest_filing)
             
         except Exception as e:
             print(f"❌ SEC Fetch Error for {investor['name']}: {e}")

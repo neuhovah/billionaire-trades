@@ -1,6 +1,8 @@
 import os
 import time
+import re
 import requests
+from datetime import datetime, timedelta
 from edgar import set_identity, Company
 from supabase import create_client, Client
 from dotenv import load_dotenv, find_dotenv
@@ -19,7 +21,7 @@ set_identity("Nsikan Eno Uso-essien admin@uyologistics.com")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID")
 
-def send_activist_alert(investor_name, target_company, form_type, date, accession_no):
+def send_activist_alert(investor_name, target_company, form_type, date, sec_url):
     """Broadcasts a high-priority alert for >5% ownership acquisitions."""
     # Classify the intent of the filing
     if "13D" in form_type:
@@ -31,14 +33,19 @@ def send_activist_alert(investor_name, target_company, form_type, date, accessio
         f"🚨 *Institutional {form_type} Signal: {investor_name}*\n\n"
         f"🎯 *Target Asset:* `{target_company}`\n"
         f"⚡ *Type:* `{action}`\n"
-        f"📅 *Filing Date:* `{date}`\n"
-        f"🔗 *Accession:* `{accession_no}`"
+        f"📅 *Filing Date:* `{date}`\n\n"
+        f"🔗 *Verify SEC EDGAR Filing:*\n{sec_url}"
     )
     
     try:
         response = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHANNEL_ID, "text": message, "parse_mode": "Markdown"},
+            json={
+                "chat_id": TELEGRAM_CHANNEL_ID, 
+                "text": message, 
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True
+            },
             timeout=10
         )
         if response.status_code == 200:
@@ -53,11 +60,13 @@ def run_activist_pipeline():
     print("=== STARTING 13D/G ACTIVIST STAKES PIPELINE ===")
     
     investors = supabase.table("investors").select("*").eq("market", "US Equities").execute().data
+    thirty_days_ago = datetime.now() - timedelta(days=30)
 
     for investor in investors:
         print(f"\n📡 Monitoring Activist Filings for {investor['name']}")
         try:
-            company = Company(str(investor['cik']).zfill(10))
+            cik_str = str(investor['cik']).zfill(10)
+            company = Company(cik_str)
             
             # Fetch SC 13D (Activist) and SC 13G (Passive) and their amendments (/A)
             filings = company.get_filings(form=["SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A"])
@@ -71,6 +80,13 @@ def run_activist_pipeline():
             
             for filing in recent_filings:
                 accession_no = filing.accession_no
+                date = str(filing.filing_date)
+                
+                # Protect against Historical Drift: Skip filings older than 30 days
+                filing_date_obj = datetime.strptime(date, "%Y-%m-%d")
+                if filing_date_obj < thirty_days_ago:
+                    print(f"  🕰️ Historical filing detected ({date}). Skipping.")
+                    continue
                 
                 # Deduplication check
                 existing = supabase.table("activist_stakes").select("id").eq("filing_accession", accession_no).execute()
@@ -78,16 +94,22 @@ def run_activist_pipeline():
                     continue
                 
                 form_type = filing.form
-                date = str(filing.filing_date)
                 
-                # Extract the Subject Company (The target of the acquisition)
+                # Generate Clickable SEC EDGAR URL
+                clean_accession = accession_no.replace("-", "")
+                sec_url = f"https://www.sec.gov/Archives/edgar/data/{cik_str.lstrip('0')}/{clean_accession}/{accession_no}-index.html"
+                
+                # Bulletproof Subject Company Extraction via Raw SGML Header Parsing
                 target_company = "Unknown Target Entity"
                 try:
-                    obj = filing.obj()
-                    if obj and hasattr(obj, 'subject_company') and obj.subject_company:
-                        target_company = str(obj.subject_company).strip()
-                except:
-                    pass
+                    if hasattr(filing, 'header') and filing.header and filing.header.text:
+                        header_text = str(filing.header.text)
+                        # In 13D/G SEC headers, the first "COMPANY CONFORMED NAME:" is the target issuer
+                        match = re.search(r"COMPANY CONFORMED NAME:\s*([^\n\r]+)", header_text)
+                        if match:
+                            target_company = match.group(1).strip()
+                except Exception as e:
+                    print(f"  ⚠️ Could not parse header for {accession_no}: {e}")
                 
                 # Append to Immutable Database
                 supabase.table("activist_stakes").upsert({
@@ -100,7 +122,7 @@ def run_activist_pipeline():
                 }, on_conflict="filing_accession").execute()
                 
                 # Fire Telegram Webhook
-                send_activist_alert(investor['name'], target_company, form_type, date, accession_no)
+                send_activist_alert(investor['name'], target_company, form_type, date, sec_url)
                         
         except Exception as e:
             print(f"  ❌ Activist Fetch Error for {investor['name']}: {e}")
