@@ -8,31 +8,25 @@ from edgar import set_identity, Company
 from supabase import create_client, Client
 from dotenv import load_dotenv, find_dotenv
 
-# Automatically locate and load .env from the project root directory
 load_dotenv(find_dotenv())
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
-# STRICT REQUIREMENT: Must use Service Role Key to bypass RLS for backend writing
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") 
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("CRITICAL: Supabase Service Role credentials missing in .env file.")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# SEC Identity (Required for compliant EDGAR scraping)
 set_identity("Nsikan Eno Uso-essien admin@uyologistics.com")
 
-# Telegram VIP Channel Webhook Configuration
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID")
 
 if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
     raise ValueError("CRITICAL: Telegram credentials missing. Update .env file.")
 
-def send_delta_alert(investor_name: str, ticker: str, current_shares: int, prev_shares: int, report_date: str, sec_url: str):
-    """Fires a Telegram alert ONLY when a position size changes quarter-over-quarter."""
+def send_delta_alert(investor_name: str, ticker: str, put_call: str, sec_type: str, current_shares: int, prev_shares: int, report_date: str, sec_url: str):
     if current_shares == prev_shares:
-        return  # Suppress alert for completely unchanged positions
+        return
 
     if prev_shares == 0:
         action = "🟢 NEW POSITION"
@@ -41,12 +35,23 @@ def send_delta_alert(investor_name: str, ticker: str, current_shares: int, prev_
         pct = (diff / prev_shares) * 100
         action = f"🟢 ADDED (+{pct:.1f}%)" if diff > 0 else f"🔴 TRIMMED ({pct:.1f}%)"
 
+    # Format the asset label to explicitly call out Puts/Calls vs Common Stock
+    asset_display = f"${ticker}"
+    shares_label = "Shares"
+    
+    if put_call:
+        asset_display += f" — {put_call} OPTION"
+        shares_label = f"Underlying {sec_type}"
+    elif sec_type == 'PRN':
+        asset_display += " — PRINCIPAL DEBT"
+        shares_label = "Principal Amount"
+
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     message = (
         f"🚨 *Institutional 13F Delta: {investor_name}*\n\n"
-        f"🏢 *Asset:* `${ticker}`\n"
+        f"🏢 *Asset:* `{asset_display}`\n"
         f"⚡ *Action:* `{action}`\n"
-        f"📊 *Current Shares:* `{current_shares:,}` (was {prev_shares:,})\n"
+        f"📊 *Current {shares_label}:* `{current_shares:,}` (was {prev_shares:,})\n"
         f"📅 *Period:* `{report_date}`\n\n"
         f"🔗 *Verify SEC EDGAR Filing:*\n{sec_url}"
     )
@@ -61,20 +66,17 @@ def send_delta_alert(investor_name: str, ticker: str, current_shares: int, prev_
     try:
         response = requests.post(url, json=payload, timeout=10)
         if response.status_code == 200:
-            print(f"  📢 Alert Broadcasted: {investor_name} {action} {ticker}")
-            time.sleep(3.5)  # Strict Telegram API rate limit protection (max 20 msgs/min)
+            print(f"  📢 Alert Broadcasted: {investor_name} {action} {asset_display}")
+            time.sleep(3.5)
         else:
             print(f"  ❌ Telegram API Error: {response.text}")
     except Exception as e:
         print(f"  ❌ Connection Failed: {e}")
 
 def get_real_volatility(ticker: str):
-    """Calculates actual volatility. Returns None if data is missing or insufficient."""
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="90d")
-        
-        # Require a statistically significant sample size (approx. 2 months of trading days)
         if not hist.empty and len(hist) >= 45:
             hist['Returns'] = hist['Close'].pct_change()
             vol_90d = hist['Returns'].std() * np.sqrt(252)
@@ -86,71 +88,82 @@ def get_real_volatility(ticker: str):
         return None
 
 def process_sec_filing(investor_id, investor_name, cik, filing):
-    """Parses a valid 13F filing with strict filtering for pure long equity common stock."""
     try:
         holdings = filing.obj().holdings
         holdings.columns = holdings.columns.str.lower()
         
-        # 1. ENTERPRISE FILTERING: Remove Options (Puts/Calls) and Debt (PRN)
-        if 'putcall' in holdings.columns:
-            holdings = holdings[holdings['putcall'].isnull() | (holdings['putcall'] == '')]
-        if 'sshprnamttype' in holdings.columns:
-            holdings = holdings[holdings['sshprnamttype'] == 'SH']
+        # 1. FIX: Do NOT drop options. Extract the exact instrument type instead.
+        if 'putcall' not in holdings.columns:
+            holdings['putcall'] = ''
+        if 'sshprnamttype' not in holdings.columns:
+            holdings['sshprnamttype'] = 'SH'
+            
+        # Clean strings to prevent grouping errors (e.g., 'Put', 'PUT ', 'put')
+        holdings['putcall'] = holdings['putcall'].fillna('').astype(str).str.strip().str.upper()
+        holdings['sshprnamttype'] = holdings['sshprnamttype'].fillna('SH').astype(str).str.strip().str.upper()
             
         report_date = str(filing.period_of_report)
         accession_no = filing.accession_no
         
-        # Build Direct SEC Verification Link
         clean_accession = accession_no.replace("-", "")
         sec_url = f"https://www.sec.gov/Archives/edgar/data/{str(cik).lstrip('0')}/{clean_accession}/{accession_no}-index.html"
         
-        # Protect against Historical Drift: Do not broadcast alerts for filings older than 90 days
         filing_date_obj = datetime.strptime(str(filing.filing_date), "%Y-%m-%d")
         is_historical = filing_date_obj < (datetime.now() - timedelta(days=90))
         if is_historical:
             print(f"  🕰️ Historical filing detected ({filing.filing_date}). Ingesting data but suppressing Telegram alerts.")
         
-        # 2. AGGREGATE: Group by ticker to sum shares (handles multi-manager overlapping rows)
-        agg_holdings = holdings.groupby('ticker')['sharesprnamount'].sum().reset_index()
+        # 2. AGGREGATE: Group by Ticker + Option Type + Asset Type to ensure Puts/Calls don't overwrite Stock
+        agg_holdings = holdings.groupby(['ticker', 'putcall', 'sshprnamttype'])['sharesprnamount'].sum().reset_index()
 
         for _, row in agg_holdings.iterrows():
             ticker = str(row['ticker']).strip().upper()
             if ticker == 'NAN' or not ticker: continue
             
+            put_call = row['putcall']
+            sec_type = row['sshprnamttype']
             shares = int(float(row['sharesprnamount']))
-            print(f"  🔍 Processing {ticker} | Total Shares: {shares:,}")
             
-            # 3. QUERY HISTORY: Fetch previous quarter's shares for Delta Math
+            instrument_label = put_call if put_call else "COMMON"
+            print(f"  🔍 Processing {ticker} | Type: {instrument_label} | Total: {shares:,}")
+            
+            # 3. QUERY HISTORY: Fetch exact match (Ticker + PutCall + SecType)
             prev_record = supabase.table("holdings_history")\
                 .select("shares_held")\
                 .eq("investor_id", investor_id)\
                 .eq("ticker", ticker)\
+                .eq("put_call", put_call)\
+                .eq("security_type", sec_type)\
                 .order("period_of_report", desc=True)\
                 .limit(1).execute()
                 
             prev_shares = prev_record.data[0]['shares_held'] if prev_record.data else 0
 
-            # 4. UPSERT HISTORY: Append to Immutable Log
+            # 4. UPSERT HISTORY: Uses new composite unique constraint
             supabase.table("holdings_history").upsert({
                 "investor_id": investor_id,
                 "ticker": ticker,
+                "put_call": put_call,
+                "security_type": sec_type,
                 "shares_held": shares,
                 "period_of_report": report_date,
                 "filing_accession": accession_no,
                 "data_source": "sec_edgar"
-            }, on_conflict="investor_id, ticker, period_of_report, filing_accession").execute()
+            }, on_conflict="investor_id, ticker, period_of_report, filing_accession, put_call, security_type").execute()
 
-            # 5. UPSERT FILINGS: Update Current State View
+            # 5. UPSERT FILINGS: Uses new composite unique constraint
             filing_response = supabase.table("filings").upsert({
                 "investor_id": investor_id,
                 "filing_accession": accession_no,
                 "ticker": ticker,
+                "put_call": put_call,
+                "security_type": sec_type,
                 "shares_held": shares,
                 "report_date": report_date,
                 "data_source": "sec_edgar"
-            }, on_conflict="filing_accession, ticker").execute()
+            }, on_conflict="investor_id, filing_accession, ticker, put_call, security_type").execute()
 
-            # 6. UPSERT METRICS: Record True Volatility (Flagging if absent)
+            # 6. UPSERT METRICS
             vol_90d = get_real_volatility(ticker)
             is_estimated = vol_90d is None
             
@@ -162,9 +175,9 @@ def process_sec_filing(investor_id, investor_name, cik, filing):
                     "vol_is_estimated": is_estimated
                 }, on_conflict="filing_id, ticker").execute()
 
-            # 7. FIRE WEBHOOK: Only alert if position changed AND it's a recent filing
+            # 7. FIRE WEBHOOK
             if not is_historical:
-                send_delta_alert(investor_name, ticker, shares, prev_shares, report_date, sec_url)
+                send_delta_alert(investor_name, ticker, put_call, sec_type, shares, prev_shares, report_date, sec_url)
             
     except Exception as e:
         print(f"  ❌ Error processing portfolio for {investor_name}: {e}")
@@ -172,7 +185,6 @@ def process_sec_filing(investor_id, investor_name, cik, filing):
 def run_pipeline():
     print("=== STARTING STRICT SEC EDGAR INGESTION PIPELINE ===")
     
-    # Isolate ingestion strictly to verified SEC-regulated entities
     investors = supabase.table("investors").select("*").eq("market", "US Equities").execute().data
 
     if not investors:
@@ -185,7 +197,6 @@ def run_pipeline():
         try:
             company = Company(str(investor['cik']).zfill(10))
             
-            # Fetch both standard 13F-HR and amendments 13F-HR/A
             filings_standard = company.get_filings(form="13F-HR")
             filings_amended = company.get_filings(form="13F-HR/A")
             
@@ -197,7 +208,6 @@ def run_pipeline():
                 print(f"  ⚠️ No active 13F filings found. Skipping.")
                 continue
                 
-            # ENTERPRISE FIX: Sort by period_of_report to accurately apply older quarter amendments
             all_filings.sort(key=lambda x: str(x.period_of_report), reverse=True)
             latest_filing = all_filings[0]
             
