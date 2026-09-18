@@ -15,6 +15,28 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// Types
+interface InsiderTransaction {
+  id: string;
+  reporting_owner: string;
+  ticker: string;
+  transaction_code: string;
+  shares: number;
+  price_per_share: number;
+  total_value: number;
+  transaction_date: string;
+  filing_accession: string;
+}
+
+interface ActivistStake {
+  id: string;
+  reporting_owner: string;
+  target_company: string;
+  filing_type: string;
+  filing_date: string;
+  filing_accession: string;
+}
+
 export default function InvestorDeepDive() {
   const params = useParams();
   const slug = params?.slug as string;
@@ -22,8 +44,14 @@ export default function InvestorDeepDive() {
   const [investor, setInvestor] = useState<any>(null);
   const [filings, setFilings] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
+  
+  // Real-time signal states
+  const [insiderTrades, setInsiderTrades] = useState<InsiderTransaction[]>([]);
+  const [activistStakes, setActivistStakes] = useState<ActivistStake[]>([]);
+  
   const [loading, setLoading] = useState(true);
   const [selectedFiling, setSelectedFiling] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState<'HOLDINGS' | 'INSIDER' | 'ACTIVIST'>('HOLDINGS');
 
   useEffect(() => {
     if (!slug) return;
@@ -42,22 +70,42 @@ export default function InvestorDeepDive() {
 
         if (investorData) {
           // 2. Fetch Current State (Filings + Provenance Metrics)
-          const { data: filingsData, error: filError } = await supabase
+          const filingsPromise = supabase
             .from('filings')
             .select('*, metrics(volatility_90d, vol_is_estimated)')
             .eq('investor_id', investorData.id)
             .order('shares_held', { ascending: false });
-          
-          if (!filError && filingsData) setFilings(filingsData);
 
           // 3. Fetch Append-Only History for QoQ Diffing
-          const { data: historyData, error: histError } = await supabase
+          const historyPromise = supabase
             .from('holdings_history')
             .select('ticker, shares_held, period_of_report')
             .eq('investor_id', investorData.id)
             .order('period_of_report', { ascending: false });
-            
-          if (!histError && historyData) setHistory(historyData);
+
+          // 4. Fetch Form 4 Insider Trades for this specific manager
+          const insiderPromise = supabase
+            .from('insider_transactions')
+            .select('*')
+            .eq('reporting_owner', investorData.name)
+            .order('transaction_date', { ascending: false });
+
+          // 5. Fetch 13D/G Activist Stakes for this specific manager
+          const activistPromise = supabase
+            .from('activist_stakes')
+            .select('*')
+            .eq('investor_id', investorData.id)
+            .order('filing_date', { ascending: false });
+
+          // Execute concurrently for speed
+          const [filingsRes, historyRes, insiderRes, activistRes] = await Promise.all([
+            filingsPromise, historyPromise, insiderPromise, activistPromise
+          ]);
+
+          if (!filingsRes.error && filingsRes.data) setFilings(filingsRes.data);
+          if (!historyRes.error && historyRes.data) setHistory(historyRes.data);
+          if (!insiderRes.error && insiderRes.data) setInsiderTrades(insiderRes.data as InsiderTransaction[]);
+          if (!activistRes.error && activistRes.data) setActivistStakes(activistRes.data as ActivistStake[]);
         }
       } catch (err) {
         console.error("Data Fetch Error:", err);
@@ -87,97 +135,231 @@ export default function InvestorDeepDive() {
         </Link>
 
         {/* Manager Header */}
-        <div className="mb-10 border-b border-gray-800 pb-6">
+        <div className="mb-8 border-b border-gray-800 pb-6">
           <h1 className="text-4xl font-bold text-white tracking-tight">{investor.name}</h1>
-          <div className="flex gap-4 mt-3">
+          <div className="flex flex-wrap gap-4 mt-3 items-center">
             <p className="text-gray-400 text-lg">{investor.investment_style}</p>
             <span className="text-xs font-mono text-blue-400 bg-blue-950/30 border border-blue-900/50 px-2.5 py-1 rounded">
               {investor.region} | {investor.market}
             </span>
+            {investor.market === 'US Equities' && (
+              <span className="text-xs font-mono text-emerald-400 bg-emerald-950/30 border border-emerald-900/50 px-2.5 py-1 rounded flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span> SEC EDGAR Verified
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Portfolio Table with QoQ Vector Diffing */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-2xl">
-          <div className="px-6 py-4 border-b border-gray-800 bg-gray-900/50 flex justify-between items-center">
-            <h2 className="text-xl font-semibold text-gray-200">Current Portfolio Holdings & QoQ Vectors</h2>
-            <span className="text-xs font-mono text-gray-500">{filings.length} Filings Tracked</span>
-          </div>
-          
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm text-gray-400">
-              <thead className="bg-gray-800/50 text-xs uppercase text-gray-400 font-semibold">
-                <tr>
-                  <th className="px-6 py-4">Ticker</th>
-                  <th className="px-6 py-4">Shares Held</th>
-                  <th className="px-6 py-4">QoQ Vector</th>
-                  <th className="px-6 py-4">Report Date</th>
-                  <th className="px-6 py-4">Accession No.</th>
-                  <th className="px-6 py-4 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filings.length === 0 ? (
+        {/* Deep Dive Tabs */}
+        <div className="flex items-center gap-2 font-mono text-xs mb-8 overflow-x-auto pb-2 border-b border-gray-800/50">
+          <button
+            onClick={() => setActiveTab('HOLDINGS')}
+            className={`px-4 py-2.5 rounded-t-lg transition-all border-b-2 ${
+              activeTab === 'HOLDINGS'
+                ? 'bg-blue-900/20 text-white border-blue-500 font-bold'
+                : 'text-gray-400 border-transparent hover:bg-gray-900 hover:text-gray-200'
+            }`}
+          >
+            📊 13F Holdings ({filings.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('INSIDER')}
+            className={`px-4 py-2.5 rounded-t-lg transition-all border-b-2 ${
+              activeTab === 'INSIDER'
+                ? 'bg-emerald-900/20 text-white border-emerald-500 font-bold'
+                : 'text-gray-400 border-transparent hover:bg-gray-900 hover:text-gray-200'
+            }`}
+          >
+            🟢 Form 4 Insider Trades ({insiderTrades.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('ACTIVIST')}
+            className={`px-4 py-2.5 rounded-t-lg transition-all border-b-2 ${
+              activeTab === 'ACTIVIST'
+                ? 'bg-purple-900/20 text-white border-purple-500 font-bold'
+                : 'text-gray-400 border-transparent hover:bg-gray-900 hover:text-gray-200'
+            }`}
+          >
+            🔥 13D/G Activist Stakes ({activistStakes.length})
+          </button>
+        </div>
+
+        {/* Tab 1: 13F Holdings View */}
+        {activeTab === 'HOLDINGS' && (
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="px-6 py-4 border-b border-gray-800 bg-gray-900/50 flex justify-between items-center">
+              <h2 className="text-xl font-semibold text-gray-200">Current Portfolio & QoQ Vectors</h2>
+              <span className="text-xs font-mono text-gray-500">Quarterly Snapshots</span>
+            </div>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm text-gray-400">
+                <thead className="bg-gray-800/50 text-xs uppercase text-gray-400 font-semibold">
                   <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
-                      Awaiting Verified Regulatory Data for this Portfolio.
-                    </td>
+                    <th className="px-6 py-4">Ticker</th>
+                    <th className="px-6 py-4">Shares Held</th>
+                    <th className="px-6 py-4">QoQ Vector</th>
+                    <th className="px-6 py-4">Report Date</th>
+                    <th className="px-6 py-4 text-right">Action</th>
                   </tr>
-                ) : (
-                  filings.map((filing) => {
-                    // Find immediate previous quarter using the new history state
-                    const prevFiling = history.find(
-                      (h) => h.ticker === filing.ticker && h.period_of_report < filing.report_date
-                    );
+                </thead>
+                <tbody>
+                  {filings.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                        Awaiting Verified Regulatory Data for this Portfolio.
+                      </td>
+                    </tr>
+                  ) : (
+                    filings.map((filing) => {
+                      const prevFiling = history.find(
+                        (h) => h.ticker === filing.ticker && h.period_of_report < filing.report_date
+                      );
 
-                    let diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-blue-950 text-blue-400 border border-blue-900">BASE</span>;
-                    
-                    if (prevFiling && prevFiling.shares_held) {
-                      const diff = filing.shares_held - prevFiling.shares_held;
-                      const pct = ((diff / prevFiling.shares_held) * 100).toFixed(1);
-                      if (diff > 0) {
-                        diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">+{pct}% ADDED</span>;
-                      } else if (diff < 0) {
-                        diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20">{pct}% TRIMMED</span>;
+                      let diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-blue-950 text-blue-400 border border-blue-900">BASE</span>;
+                      
+                      if (prevFiling && prevFiling.shares_held) {
+                        const diff = filing.shares_held - prevFiling.shares_held;
+                        const pct = ((diff / prevFiling.shares_held) * 100).toFixed(1);
+                        if (diff > 0) {
+                          diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">+{pct}% ADDED</span>;
+                        } else if (diff < 0) {
+                          diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20">{pct}% TRIMMED</span>;
+                        } else {
+                          diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-800 text-gray-400 border border-gray-700">UNCHANGED</span>;
+                        }
                       } else {
-                        diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-800 text-gray-400 border border-gray-700">UNCHANGED</span>;
+                        diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-purple-500/10 text-purple-400 border border-purple-500/20">NEW POSITION</span>;
                       }
-                    } else {
-                      diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-purple-500/10 text-purple-400 border border-purple-500/20">NEW POSITION</span>;
-                    }
 
-                    return (
-                      <tr key={filing.id} className="border-b border-gray-800 hover:bg-gray-800/25 transition-colors">
-                        <td className="px-6 py-4 font-bold text-blue-400">${filing.ticker}</td>
-                        <td className="px-6 py-4 text-emerald-400 font-medium font-mono">
-                          {filing.shares_held ? filing.shares_held.toLocaleString() : 'N/A'}
-                        </td>
-                        <td className="px-6 py-4">
-                          {diffBadge}
-                        </td>
-                        <td className="px-6 py-4 font-mono text-xs">{filing.report_date}</td>
-                        <td className="px-6 py-4 font-mono text-xs text-gray-500 truncate max-w-[150px]">{filing.filing_accession}</td>
-                        <td className="px-6 py-4 text-right">
-                          <button 
-                            onClick={() => setSelectedFiling(filing)}
-                            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-xs font-bold transition-colors shadow-lg active:scale-95"
-                          >
-                            Analyze Setup
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+                      return (
+                        <tr key={filing.id} className="border-b border-gray-800 hover:bg-gray-800/25 transition-colors">
+                          <td className="px-6 py-4 font-bold text-blue-400">${filing.ticker}</td>
+                          <td className="px-6 py-4 text-emerald-400 font-medium font-mono">
+                            {filing.shares_held ? filing.shares_held.toLocaleString() : 'N/A'}
+                          </td>
+                          <td className="px-6 py-4">{diffBadge}</td>
+                          <td className="px-6 py-4 font-mono text-xs">{filing.report_date}</td>
+                          <td className="px-6 py-4 text-right">
+                            <button 
+                              onClick={() => setSelectedFiling(filing)}
+                              className="bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-600/50 px-4 py-1.5 rounded text-xs font-bold transition-colors"
+                            >
+                              Analyze
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Modal Logic - Enterprise Upgraded */}
+        {/* Tab 2: Insider Trades View */}
+        {activeTab === 'INSIDER' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {insiderTrades.length === 0 ? (
+              <div className="col-span-full py-16 text-center border border-gray-800 bg-gray-900/40 rounded-xl text-gray-500 font-mono text-sm">
+                No recent Form 4 insider transactions recorded for {investor.name}.
+              </div>
+            ) : (
+              insiderTrades.map((tx) => {
+                const isBuy = tx.transaction_code === 'P';
+                return (
+                  <div key={tx.id} className="bg-gray-900 border border-gray-800 p-5 rounded-xl hover:border-gray-700 transition-colors shadow-lg">
+                    <div className="flex justify-between items-start mb-4">
+                      <h3 className="text-xl font-bold text-white font-mono">${tx.ticker}</h3>
+                      <span className={`text-[10px] font-mono px-2 py-1 rounded border font-bold ${
+                        isBuy ? 'bg-emerald-950 text-emerald-400 border-emerald-800' : 'bg-red-950 text-red-400 border-red-800'
+                      }`}>
+                        {isBuy ? '🟢 OPEN MARKET BUY' : '🔴 OPEN MARKET SELL'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 font-mono text-xs text-gray-300">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Shares Traded:</span>
+                        <span className="font-bold">{tx.shares?.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Avg Price:</span>
+                        <span className="font-bold">${tx.price_per_share?.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between pt-2 border-t border-gray-800/80">
+                        <span className="text-gray-500">Total Value:</span>
+                        <span className="font-bold text-emerald-400">
+                          ${tx.total_value?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 pt-4 border-t border-gray-800 flex justify-between items-center text-[10px] font-mono">
+                      <span className="text-gray-500">{tx.transaction_date}</span>
+                      <a
+                        href={`https://www.sec.gov/edgar/browse/?CIK=${tx.filing_accession}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 hover:underline"
+                      >
+                        Verify EDGAR →
+                      </a>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* Tab 3: Activist Stakes View */}
+        {activeTab === 'ACTIVIST' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {activistStakes.length === 0 ? (
+              <div className="col-span-full py-16 text-center border border-gray-800 bg-gray-900/40 rounded-xl text-gray-500 font-mono text-sm">
+                No recent 13D/G activist or passive stakes recorded for {investor.name}.
+              </div>
+            ) : (
+              activistStakes.map((stake) => {
+                const isActivist = stake.filing_type?.includes('13D');
+                return (
+                  <div key={stake.id} className="bg-gray-900 border border-gray-800 p-6 rounded-xl hover:border-gray-700 transition-colors shadow-lg">
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <span className="text-[10px] font-mono text-gray-500 uppercase tracking-wider">Target Entity</span>
+                        <h3 className="text-xl font-bold text-white mt-0.5">{stake.target_company}</h3>
+                      </div>
+                      <span className={`text-[10px] font-mono px-2 py-1 rounded border font-bold ${
+                        isActivist ? 'bg-amber-950 text-amber-400 border-amber-800' : 'bg-blue-950 text-blue-400 border-blue-800'
+                      }`}>
+                        {stake.filing_type} {isActivist ? '• ACTIVIST INTENT' : '• PASSIVE STAKE'}
+                      </span>
+                    </div>
+
+                    <div className="mt-6 pt-4 border-t border-gray-800/80 flex justify-between items-center text-xs font-mono">
+                      <span className="text-gray-500">Filing Date: {stake.filing_date}</span>
+                      <a
+                        href={`https://www.sec.gov/edgar/browse/?CIK=${stake.filing_accession}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 hover:underline flex items-center gap-1 font-bold"
+                      >
+                        Read SEC Filing →
+                      </a>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* Modal Logic for 13F Analysis */}
         {selectedFiling && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-            <div className="bg-gray-900 border border-gray-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative max-h-[90vh] flex flex-col">
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative max-h-[90vh] flex flex-col scale-in-95 duration-200">
               
               <div className="flex justify-between items-start border-b border-gray-800 pb-4 mb-4 shrink-0">
                 <div>
@@ -192,8 +374,8 @@ export default function InvestorDeepDive() {
                 </div>
                 <button 
                   onClick={() => setSelectedFiling(null)}
-                  className="text-gray-400 hover:text-white font-bold text-xl transition-colors"
-                >✕</button>
+                  className="text-gray-500 hover:text-white font-bold text-2xl transition-colors leading-none"
+                >×</button>
               </div>
 
               <div className="space-y-4 text-sm text-gray-300 overflow-y-auto pr-1 flex-1">
