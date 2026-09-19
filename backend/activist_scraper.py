@@ -75,18 +75,16 @@ def run_activist_pipeline():
                 print("  ⚠️ No 13D/G filings found. Skipping.")
                 continue
                 
-            # Scan the 3 most recent filings per manager
-            recent_filings = filings.head(3)
-            
-            for filing in recent_filings:
+            # ENTERPRISE FIX: Removed .head(3) limit. Iterate all, but break at 30-day historical boundary.
+            for filing in filings:
                 accession_no = filing.accession_no
                 date = str(filing.filing_date)
                 
-                # Protect against Historical Drift: Skip filings older than 30 days
+                # Performance & Drift Protection: Break the loop once we hit filings older than 30 days
                 filing_date_obj = datetime.strptime(date, "%Y-%m-%d")
                 if filing_date_obj < thirty_days_ago:
-                    print(f"  🕰️ Historical filing detected ({date}). Skipping.")
-                    continue
+                    print(f"  🕰️ Historical boundary reached ({date}). Moving to next manager.")
+                    break
                 
                 # Deduplication check
                 existing = supabase.table("activist_stakes").select("id").eq("filing_accession", accession_no).execute()
