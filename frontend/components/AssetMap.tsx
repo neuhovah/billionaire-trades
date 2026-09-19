@@ -86,11 +86,11 @@ export default function AssetMap({ ticker }: { ticker: string }) {
         <MapContainer center={position} zoom={zoom} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false}>
           <LayersControl position="topright">
             
-            {/* Esri Dark Canvas Basemap (Watermark-Free Public Endpoint) */}
-            <LayersControl.BaseLayer checked name="Dark Canvas (Terminal)">
+            {/* CartoDB Dark Matter (Public Fastly CDN - Keyless & Watermark-Free) */}
+            <LayersControl.BaseLayer checked name="Dark Matter (Terminal)">
               <TileLayer
-                url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Base/MapServer/tile/{z}/{y}/{x}"
-                attribution='Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ'
+                url="https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
               />
             </LayersControl.BaseLayer>
             
@@ -116,7 +116,7 @@ export default function AssetMap({ ticker }: { ticker: string }) {
         </MapContainer>
       </div>
 
-      {/* Location Indicator Bar */}
+      {/* Honest Location Indicator Bar */}
       <div className="flex justify-between items-center text-[10px] font-mono text-gray-400 bg-gray-950 px-3.5 py-2 border-t border-gray-800 shrink-0">
         <span className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
