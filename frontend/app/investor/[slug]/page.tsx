@@ -69,35 +69,34 @@ export default function InvestorDeepDive() {
         setInvestor(investorData);
 
         if (investorData) {
-          // 2. Fetch Current State (Filings + Provenance Metrics)
+          // 2. Fetch Current 13F Holdings (including put_call & security_type)
           const filingsPromise = supabase
             .from('filings')
             .select('*, metrics(volatility_90d, vol_is_estimated)')
             .eq('investor_id', investorData.id)
             .order('shares_held', { ascending: false });
 
-          // 3. Fetch Append-Only History for QoQ Diffing
+          // 3. Fetch History for Delta Math (including put_call & security_type)
           const historyPromise = supabase
             .from('holdings_history')
-            .select('ticker, shares_held, period_of_report')
+            .select('ticker, put_call, security_type, shares_held, period_of_report')
             .eq('investor_id', investorData.id)
             .order('period_of_report', { ascending: false });
 
-          // 4. Fetch Form 4 Insider Trades for this specific manager
+          // 4. Fetch Insider Trades
           const insiderPromise = supabase
             .from('insider_transactions')
             .select('*')
             .eq('reporting_owner', investorData.name)
             .order('transaction_date', { ascending: false });
 
-          // 5. Fetch 13D/G Activist Stakes for this specific manager
+          // 5. Fetch Activist Stakes
           const activistPromise = supabase
             .from('activist_stakes')
             .select('*')
             .eq('investor_id', investorData.id)
             .order('filing_date', { ascending: false });
 
-          // Execute concurrently for speed
           const [filingsRes, historyRes, insiderRes, activistRes] = await Promise.all([
             filingsPromise, historyPromise, insiderPromise, activistPromise
           ]);
@@ -125,6 +124,11 @@ export default function InvestorDeepDive() {
     return <div className="min-h-screen bg-gray-950 flex items-center justify-center font-mono text-red-400">Investor profile not found.</div>;
   }
 
+  // Detect deregistered fund status (e.g., Scion Asset Management)
+  const isDeregistered = investor.slug === 'scion-asset-management' || investor.status === 'deregistered';
+  // Detect private unlisted entity
+  const isPrivate = investor.market === 'Private' || investor.status === 'private';
+
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-8 font-sans">
       <div className="max-w-7xl mx-auto">
@@ -133,6 +137,19 @@ export default function InvestorDeepDive() {
         <Link href="/" className="text-gray-500 hover:text-white font-mono text-sm flex items-center gap-2 mb-8 transition-colors w-fit">
           <span>←</span> Back to Global Hub
         </Link>
+
+        {/* Deregistered Fund Lifecycle Notice */}
+        {isDeregistered && (
+          <div className="mb-8 bg-amber-950/40 border border-amber-800/80 p-4 rounded-xl flex items-start gap-3 text-amber-200 text-xs font-mono shadow-lg">
+            <span className="text-amber-400 text-base">⚠️</span>
+            <div>
+              <strong className="block text-amber-300 uppercase tracking-wider font-bold mb-1">
+                Fund Lifecycle Status: Terminated / Deregistered
+              </strong>
+              {investor.name} registered termination with the SEC. Disclosed positions reflect the final 13F filing period prior to capital liquidation.
+            </div>
+          </div>
+        )}
 
         {/* Manager Header */}
         <div className="mb-8 border-b border-gray-800 pb-6">
@@ -188,16 +205,17 @@ export default function InvestorDeepDive() {
         {activeTab === 'HOLDINGS' && (
           <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="px-6 py-4 border-b border-gray-800 bg-gray-900/50 flex justify-between items-center">
-              <h2 className="text-xl font-semibold text-gray-200">Current Portfolio & QoQ Vectors</h2>
-              <span className="text-xs font-mono text-gray-500">Quarterly Snapshots</span>
+              <h2 className="text-xl font-semibold text-gray-200">Disclosed Portfolio Holdings</h2>
+              <span className="text-xs font-mono text-gray-500">Quarterly Disclosure Snapshots</span>
             </div>
             
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm text-gray-400">
                 <thead className="bg-gray-800/50 text-xs uppercase text-gray-400 font-semibold">
                   <tr>
-                    <th className="px-6 py-4">Ticker</th>
-                    <th className="px-6 py-4">Shares Held</th>
+                    <th className="px-6 py-4">Asset / Ticker</th>
+                    <th className="px-6 py-4">Instrument Class</th>
+                    <th className="px-6 py-4">Disclosed Exposure</th>
                     <th className="px-6 py-4">QoQ Vector</th>
                     <th className="px-6 py-4">Report Date</th>
                     <th className="px-6 py-4 text-right">Action</th>
@@ -206,40 +224,81 @@ export default function InvestorDeepDive() {
                 <tbody>
                   {filings.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
-                        Awaiting Verified Regulatory Data for this Portfolio.
+                      <td colSpan={6} className="px-6 py-12 text-center text-gray-500 font-mono text-sm">
+                        {isPrivate ? 'PRIVATE — NO PUBLIC DISCLOSURE' : 'Awaiting Verified Regulatory Data for this Portfolio.'}
                       </td>
                     </tr>
                   ) : (
                     filings.map((filing) => {
+                      const isPut = filing.put_call === 'PUT';
+                      const isCall = filing.put_call === 'CALL';
+                      const isOption = isPut || isCall;
+
+                      // Match exact asset class in history for QoQ delta
                       const prevFiling = history.find(
-                        (h) => h.ticker === filing.ticker && h.period_of_report < filing.report_date
+                        (h) => 
+                          h.ticker === filing.ticker && 
+                          (h.put_call || '') === (filing.put_call || '') &&
+                          (h.security_type || '') === (filing.security_type || '') &&
+                          h.period_of_report < filing.report_date
                       );
 
-                      let diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-blue-950 text-blue-400 border border-blue-900">BASE</span>;
+                      // Suppress "NEW POSITION" if history has fewer than 2 distinct reporting periods
+                      const uniquePeriods = new Set(history.map(h => h.period_of_report)).size;
+                      const hasSufficientHistory = uniquePeriods >= 2;
+
+                      let diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-800 text-gray-400 border border-gray-700">—</span>;
                       
-                      if (prevFiling && prevFiling.shares_held) {
-                        const diff = filing.shares_held - prevFiling.shares_held;
-                        const pct = ((diff / prevFiling.shares_held) * 100).toFixed(1);
-                        if (diff > 0) {
-                          diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">+{pct}% ADDED</span>;
-                        } else if (diff < 0) {
-                          diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20">{pct}% TRIMMED</span>;
+                      if (hasSufficientHistory) {
+                        if (prevFiling && prevFiling.shares_held) {
+                          const diff = filing.shares_held - prevFiling.shares_held;
+                          const pct = ((diff / prevFiling.shares_held) * 100).toFixed(1);
+                          if (diff > 0) {
+                            diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">+{pct}% ADDED</span>;
+                          } else if (diff < 0) {
+                            diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20">{pct}% TRIMMED</span>;
+                          } else {
+                            diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-800 text-gray-400 border border-gray-700">UNCHANGED</span>;
+                          }
                         } else {
-                          diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-800 text-gray-400 border border-gray-700">UNCHANGED</span>;
+                          diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-purple-500/10 text-purple-400 border border-purple-500/20">NEW POSITION</span>;
                         }
                       } else {
-                        diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-purple-500/10 text-purple-400 border border-purple-500/20">NEW POSITION</span>;
+                        // Less than 2 periods in DB, default to INITIAL RECORD
+                        diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-800 text-gray-400 border border-gray-700">INITIAL RECORD</span>;
                       }
 
                       return (
                         <tr key={filing.id} className="border-b border-gray-800 hover:bg-gray-800/25 transition-colors">
-                          <td className="px-6 py-4 font-bold text-blue-400">${filing.ticker}</td>
-                          <td className="px-6 py-4 text-emerald-400 font-medium font-mono">
-                            {filing.shares_held ? filing.shares_held.toLocaleString() : 'N/A'}
+                          <td className="px-6 py-4 font-bold text-blue-400 font-mono">${filing.ticker}</td>
+                          
+                          {/* Instrument Class Badge */}
+                          <td className="px-6 py-4">
+                            {isPut ? (
+                              <span className="px-2.5 py-1 rounded text-[10px] font-mono font-bold bg-red-950 text-red-400 border border-red-800">
+                                🔴 PUT OPTION
+                              </span>
+                            ) : isCall ? (
+                              <span className="px-2.5 py-1 rounded text-[10px] font-mono font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
+                                🟢 CALL OPTION
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-1 rounded text-[10px] font-mono bg-gray-950 text-gray-400 border border-gray-800">
+                                LONG COMMON STOCK
+                              </span>
+                            )}
                           </td>
+
+                          {/* Disclosed Exposure */}
+                          <td className="px-6 py-4 font-mono">
+                            <span className="text-gray-100 font-bold">{filing.shares_held ? filing.shares_held.toLocaleString() : 'N/A'}</span>
+                            <span className="text-gray-500 text-[11px] block font-sans">
+                              {isOption ? 'Notional Underlying Shares' : 'Shares Owned Outright'}
+                            </span>
+                          </td>
+
                           <td className="px-6 py-4">{diffBadge}</td>
-                          <td className="px-6 py-4 font-mono text-xs">{filing.report_date}</td>
+                          <td className="px-6 py-4 font-mono text-xs text-gray-400">{filing.report_date}</td>
                           <td className="px-6 py-4 text-right">
                             <button 
                               onClick={() => setSelectedFiling(filing)}
@@ -260,7 +319,7 @@ export default function InvestorDeepDive() {
 
         {/* Tab 2: Insider Trades View */}
         {activeTab === 'INSIDER' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {insiderTrades.length === 0 ? (
               <div className="col-span-full py-16 text-center border border-gray-800 bg-gray-900/40 rounded-xl text-gray-500 font-mono text-sm">
                 No recent Form 4 insider transactions recorded for {investor.name}.
@@ -316,7 +375,7 @@ export default function InvestorDeepDive() {
 
         {/* Tab 3: Activist Stakes View */}
         {activeTab === 'ACTIVIST' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {activistStakes.length === 0 ? (
               <div className="col-span-full py-16 text-center border border-gray-800 bg-gray-900/40 rounded-xl text-gray-500 font-mono text-sm">
                 No recent 13D/G activist or passive stakes recorded for {investor.name}.
@@ -356,20 +415,28 @@ export default function InvestorDeepDive() {
           </div>
         )}
 
-        {/* Modal Logic for 13F Analysis */}
+        {/* Modal Logic for Position Analysis */}
         {selectedFiling && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
             <div className="bg-gray-900 border border-gray-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative max-h-[90vh] flex flex-col scale-in-95 duration-200">
               
               <div className="flex justify-between items-start border-b border-gray-800 pb-4 mb-4 shrink-0">
                 <div>
-                  <h3 className="text-2xl font-bold text-white">${selectedFiling.ticker} Quantitative Breakdown</h3>
-                  {/* Data Provenance Badge */}
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-2xl font-bold text-white">${selectedFiling.ticker}</h3>
+                    {selectedFiling.put_call && (
+                      <span className={`border text-xs font-mono font-bold px-2 py-0.5 rounded ${
+                        selectedFiling.put_call === 'PUT' ? 'bg-red-950 text-red-400 border-red-800' : 'bg-emerald-950 text-emerald-400 border-emerald-800'
+                      }`}>
+                        {selectedFiling.put_call} OPTION
+                      </span>
+                    )}
+                  </div>
                   <div className="mt-2 inline-flex items-center gap-2 text-[10px] uppercase font-mono bg-gray-950 border border-gray-800 text-gray-400 px-2.5 py-1 rounded">
                     <span className="text-emerald-500">●</span> 
-                    Position Data: {selectedFiling.data_source === 'sec_edgar' ? <span className="text-emerald-400">VERIFIED: SEC 13F-HR</span> : 'MANUAL ENTRY'} 
+                    Source: {selectedFiling.data_source === 'sec_edgar' ? <span className="text-emerald-400">VERIFIED: SEC 13F-HR</span> : 'MANUAL ENTRY'} 
                     <span className="mx-1 text-gray-600">|</span> 
-                    As Of: {selectedFiling.report_date}
+                    Period: {selectedFiling.report_date}
                   </div>
                 </div>
                 <button 
@@ -383,13 +450,15 @@ export default function InvestorDeepDive() {
                 {/* Metrics Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800 flex flex-col justify-between">
-                    <span className="text-gray-400 text-xs">Institutional Position:</span>
+                    <span className="text-gray-400 text-xs">
+                      {selectedFiling.put_call ? 'Notional Underlying Exposure:' : 'Institutional Shares Held:'}
+                    </span>
                     <span className="font-mono text-emerald-400 font-bold text-base mt-1">
                       {selectedFiling.shares_held ? selectedFiling.shares_held.toLocaleString() : 'N/A'}
                     </span>
                   </div>
                   
-                  {/* Volatility Metric with Transparency Tooltip */}
+                  {/* Volatility Metric */}
                   <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800 flex flex-col justify-between relative group">
                     <span className="text-gray-400 text-xs flex justify-between items-center">
                       90-Day Volatility (σ):
@@ -397,15 +466,7 @@ export default function InvestorDeepDive() {
                     </span>
                     <span className="font-mono text-blue-400 font-bold text-base mt-1 flex items-center">
                       {selectedFiling.metrics?.[0]?.volatility_90d ? `${selectedFiling.metrics[0].volatility_90d}%` : 'N/A'}
-                      {selectedFiling.metrics?.[0]?.vol_is_estimated && (
-                        <span className="text-[8px] text-amber-500 font-mono border border-amber-500/30 bg-amber-500/10 px-1 py-0.5 rounded ml-2 uppercase">
-                          Estimated
-                        </span>
-                      )}
                     </span>
-                    <div className="absolute hidden group-hover:block -top-8 left-0 bg-gray-800 text-xs px-2 py-1 rounded border border-gray-700 w-full z-10 text-center shadow-lg">
-                      Calculated via Yahoo Finance Market API
-                    </div>
                   </div>
                   
                   <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800 flex flex-col justify-between">
@@ -418,78 +479,14 @@ export default function InvestorDeepDive() {
                   </div>
                 </div>
 
-                {/* Relabeled Spatial Map */}
+                {/* Honest Headquarters Location Display */}
                 <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800">
                   <div className="flex justify-between items-center mb-2">
-                    <span className="text-gray-400 font-semibold text-xs">Primary Corporate Headquarters:</span>
-                    <span className="text-[9px] text-gray-500 font-mono">POSTGIS GPS</span>
+                    <span className="text-gray-400 font-semibold text-xs">Primary Corporate Headquarters Location</span>
                   </div>
                   <AssetMap ticker={selectedFiling.ticker} />
                 </div>
 
-                {/* Ticker-Based Dynamic Broker Routing */}
-                <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800">
-                  <div className="flex justify-between items-center mb-2.5">
-                    <span className="text-gray-400 font-semibold text-xs">Common Market Access:</span>
-                    <span className="text-[10px] uppercase font-mono bg-blue-900/40 text-blue-400 border border-blue-800/40 px-2 py-0.5 rounded">
-                      {!selectedFiling.ticker.includes('.') ? 'US Equities DMA' : 'Regional / Cross-Border'}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2.5">
-                    
-                    {/* Logic: US-Listed Equities (Tickers with no exchange suffix) */}
-                    {!selectedFiling.ticker.includes('.') && (
-                      <>
-                        <a href="https://www.interactivebrokers.com" target="_blank" rel="noopener noreferrer" className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-blue-500/50 p-2.5 rounded-lg flex flex-col group transition-all">
-                          <div className="flex justify-between items-center">
-                            <span className="text-white font-bold text-xs group-hover:text-blue-400">Interactive Brokers</span>
-                            <span className="text-[9px] text-gray-500 font-mono">GLOBAL</span>
-                          </div>
-                          <span className="text-gray-400 text-[10px] mt-0.5">US Equities Access</span>
-                        </a>
-                        <a href="https://www.xtb.com" target="_blank" rel="noopener noreferrer" className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-emerald-500/50 p-2.5 rounded-lg flex flex-col group transition-all">
-                          <div className="flex justify-between items-center">
-                            <span className="text-white font-bold text-xs group-hover:text-emerald-400">XTB Global</span>
-                            <span className="text-[9px] text-gray-500 font-mono">GLOBAL</span>
-                          </div>
-                          <span className="text-gray-400 text-[10px] mt-0.5">Low-Commission Execution</span>
-                        </a>
-                      </>
-                    )}
-
-                    {/* Logic: African Equities (Tickers ending in .LG or .JO) */}
-                    {(selectedFiling.ticker.endsWith('.LG') || selectedFiling.ticker.endsWith('.JO')) && (
-                      <>
-                        <a href="https://www.stanbicibtcstockbrokers.com" target="_blank" rel="noopener noreferrer" className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-purple-500/50 p-2.5 rounded-lg flex flex-col group transition-all">
-                          <div className="flex justify-between items-center">
-                            <span className="text-white font-bold text-xs group-hover:text-purple-400">Stanbic IBTC</span>
-                            <span className="text-[9px] text-gray-500 font-mono">REGIONAL</span>
-                          </div>
-                          <span className="text-gray-400 text-[10px] mt-0.5">African Exchange Access</span>
-                        </a>
-                        <a href="https://www.cardinalstone.com" target="_blank" rel="noopener noreferrer" className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-amber-500/50 p-2.5 rounded-lg flex flex-col group transition-all">
-                          <div className="flex justify-between items-center">
-                            <span className="text-white font-bold text-xs group-hover:text-amber-400">CardinalStone</span>
-                            <span className="text-[9px] text-gray-500 font-mono">REGIONAL</span>
-                          </div>
-                          <span className="text-gray-400 text-[10px] mt-0.5">Institutional Brokerage</span>
-                        </a>
-                      </>
-                    )}
-
-                    {/* Logic: Other International Equities (e.g., .PA, .HK, .T) */}
-                    {(selectedFiling.ticker.includes('.') && !selectedFiling.ticker.endsWith('.LG') && !selectedFiling.ticker.endsWith('.JO')) && (
-                      <a href="https://www.interactivebrokers.com" target="_blank" rel="noopener noreferrer" className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-blue-500/50 p-2.5 rounded-lg flex flex-col group transition-all col-span-2">
-                        <div className="flex justify-between items-center">
-                          <span className="text-white font-bold text-xs group-hover:text-blue-400">Interactive Brokers (International)</span>
-                          <span className="text-[9px] text-gray-500 font-mono">GLOBAL</span>
-                        </div>
-                        <span className="text-gray-400 text-[10px] mt-0.5">Cross-Border Market Access</span>
-                      </a>
-                    )}
-
-                  </div>
-                </div>
               </div>
 
               <div className="mt-4 pt-3 border-t border-gray-800 flex justify-end shrink-0">
