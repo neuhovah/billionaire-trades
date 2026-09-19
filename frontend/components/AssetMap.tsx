@@ -42,18 +42,32 @@ export default function AssetMap({ ticker }: { ticker: string }) {
       }
     }
 
-    // City-Level Fallback Coordinate Dictionary
+    // Expanded Verified Corporate Headquarters Dictionary (City-Level)
     const fallbackLocations: Record<string, [number, number]> = {
-      'DANGCEM.LG': [7.9214, 7.8821],     // Obajana, Kogi State
-      'TRANSCORP.LG': [6.4531, 3.3958],   // Lagos, Nigeria
-      'UBA.LG': [6.4281, 3.4219],         // Lagos, Nigeria
-      'GEREGU.LG': [6.5244, 3.3792],      // Lagos, Nigeria
-      'FBNH.LG': [6.4474, 3.4223],        // Lagos, Nigeria
-      'AAPL': [37.3346, -122.0090],       // Cupertino, CA
-      'BAC': [35.2271, -80.8431],         // Charlotte, NC
-      'KO': [33.7710, -84.3963],          // Atlanta, GA
-      'AXP': [40.7130, -74.0146],         // New York, NY
-      'GOOGL': [37.4221, -122.0841]       // Mountain View, CA
+      // US Equities
+      'DHI': [32.7357, -97.1081],        // D.R. Horton HQ — Arlington, TX
+      'CVI': [29.6197, -95.6349],        // CVR Energy HQ — Sugar Land, TX
+      'PFE': [40.7512, -73.9740],        // Pfizer HQ — New York, NY
+      'PLTR': [39.7392, -104.9903],      // Palantir HQ — Denver, CO
+      'NVDA': [37.3541, -121.9552],      // Nvidia HQ — Santa Clara, CA
+      'AAPL': [37.3346, -122.0090],      // Apple HQ — Cupertino, CA
+      'BAC': [35.2271, -80.8431],        // Bank of America HQ — Charlotte, NC
+      'KO': [33.7710, -84.3963],         // Coca-Cola HQ — Atlanta, GA
+      'AXP': [40.7130, -74.0146],        // American Express HQ — New York, NY
+      'GOOGL': [37.4221, -122.0841],     // Alphabet HQ — Mountain View, CA
+      'GOOG': [37.4221, -122.0841],      // Alphabet HQ — Mountain View, CA
+      'DAL': [33.6407, -84.4277],        // Delta Air Lines HQ — Atlanta, GA
+      'M': [40.7508, -73.9882],          // Macy's HQ — New York, NY
+      'NUE': [35.2271, -80.8431],        // Nucor HQ — Charlotte, NC
+      'HAL': [29.7604, -95.3698],        // Halliburton HQ — Houston, TX
+      'OXY': [29.7604, -95.3698],        // Occidental Petroleum HQ — Houston, TX
+      
+      // Nigerian / African Equities
+      'DANGCEM.LG': [7.9214, 7.8821],    // Obajana Cement Plant, Kogi State
+      'TRANSCORP.LG': [6.4531, 3.3958],  // Transcorp HQ — Lagos, Nigeria
+      'UBA.LG': [6.4281, 3.4219],        // UBA Head Office — Lagos, Nigeria
+      'GEREGU.LG': [6.5244, 3.3792],     // Geregu Power Plant — Lagos, Nigeria
+      'FBNH.LG': [6.4474, 3.4223]        // First Bank HQ — Lagos, Nigeria
     };
 
     if (fallbackLocations[ticker]) {
@@ -73,7 +87,7 @@ export default function AssetMap({ ticker }: { ticker: string }) {
         <MapContainer center={position} zoom={zoom} style={{ height: '100%', width: '100%' }} scrollWheelZoom={false}>
           <LayersControl position="topright">
             
-            {/* CARTO Dark Matter Basemap */}
+            {/* CARTO Dark Matter Basemap (Clean, Keyless Public CDN) */}
             <LayersControl.BaseLayer checked name="Dark Matter (Terminal)">
               <TileLayer
                 url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
