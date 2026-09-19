@@ -69,8 +69,12 @@ export default function InvestorDeepDive() {
         setInvestor(investorData);
 
         if (investorData) {
-          // Extract first name for flexible SEC filing matching (e.g., "Warren")
+          // Extract first name for flexible SEC matching (e.g., "Warren")
           const searchName = investorData.name.split(' ')[0];
+          
+          // Dynamically extract the first word of the parent company if in parentheses (e.g., "Berkshire" from "(Berkshire Hathaway)")
+          const parentCompanyMatch = investorData.name.match(/\(([^)]+)\)/);
+          const parentCompanySearch = parentCompanyMatch ? parentCompanyMatch[1].split(' ')[0] : searchName;
 
           // 2. Fetch Current 13F Holdings
           const filingsPromise = supabase
@@ -86,18 +90,18 @@ export default function InvestorDeepDive() {
             .eq('investor_id', investorData.id)
             .order('period_of_report', { ascending: false });
 
-          // 4. Fetch Insider Trades (Flexible wildcard matching for SEC entities)
+          // 4. Fetch Insider Trades (Matches manager name, investor_id, or parent company dynamically)
           const insiderPromise = supabase
             .from('insider_transactions')
             .select('*')
-            .ilike('reporting_owner', `%${searchName}%`)
+            .or(`investor_id.eq.${investorData.id},reporting_owner.ilike.%${searchName}%,reporting_owner.ilike.%${parentCompanySearch}%`)
             .order('transaction_date', { ascending: false });
 
-          // 5. Fetch Activist Stakes (Match by ID or flexible SEC entity name)
+          // 5. Fetch Activist Stakes (Matches manager name, investor_id, or parent company dynamically)
           const activistPromise = supabase
             .from('activist_stakes')
             .select('*')
-            .or(`investor_id.eq.${investorData.id},reporting_owner.ilike.%${searchName}%`)
+            .or(`investor_id.eq.${investorData.id},reporting_owner.ilike.%${searchName}%,reporting_owner.ilike.%${parentCompanySearch}%`)
             .order('filing_date', { ascending: false });
 
           const [filingsRes, historyRes, insiderRes, activistRes] = await Promise.all([
