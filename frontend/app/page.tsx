@@ -42,11 +42,31 @@ interface ActivistStake {
   filing_accession: string;
 }
 
-// Strict Validation: Ensures CIK is not a dummy string and contains genuine numeric length
-const hasValidCik = (cik?: string | null) => {
-  if (!cik) return false;
-  const clean = String(cik).trim().toLowerCase();
-  return /\d{5,}/.test(clean) && !['0000000000', '0', 'null', 'nan', 'none', 'n/a'].includes(clean);
+// Strict Regulatory Logic Modules
+const isManagerPrivate = (inv: Partial<Investor>) => {
+  return Boolean(
+    inv.market?.toLowerCase().includes('private') ||
+    inv.status === 'private' ||
+    inv.investment_style?.toLowerCase().includes('private')
+  );
+};
+
+const isSecVerified = (inv: Partial<Investor>) => {
+  if (!inv.cik) return false;
+  const clean = String(inv.cik).trim().toLowerCase();
+  
+  // 1. Must be numeric and at least 5 digits
+  if (!/\d{5,}/.test(clean)) return false;
+  
+  // 2. Reject ORM generated repeating digit dummies (e.g., '11111', '9999999999')
+  if (/^(\d)\1+$/.test(clean)) return false;
+  
+  // 3. Reject common sequential database dummy seeds
+  const dummySeeds = ['0000000000', '12345', '123456', '123456789', '987654321', '0', 'null', 'nan', 'none', 'n/a'];
+  if (dummySeeds.includes(clean)) return false;
+
+  // 4. If they pass numeric validation, they still cannot be explicitly private
+  return !isManagerPrivate(inv);
 };
 
 export default function GlobalHub() {
@@ -91,11 +111,11 @@ export default function GlobalHub() {
       investor.market.toLowerCase().includes(searchLower) ||
       investor.region.toLowerCase().includes(searchLower);
 
-    const isSecVerified = hasValidCik(investor.cik);
+    const isSec = isSecVerified(investor);
     const matchesMarket =
       marketFilter === 'ALL' ||
-      (marketFilter === 'SEC_VERIFIED' && isSecVerified) ||
-      (marketFilter === 'REGIONAL' && !isSecVerified);
+      (marketFilter === 'SEC_VERIFIED' && isSec) ||
+      (marketFilter === 'REGIONAL' && !isSec);
 
     return matchesSearch && matchesMarket;
   });
@@ -107,7 +127,7 @@ export default function GlobalHub() {
     return acc;
   }, {});
 
-  const secVerifiedCount = investors.filter((i) => hasValidCik(i.cik)).length;
+  const secVerifiedCount = investors.filter((i) => isSecVerified(i)).length;
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-6 md:p-10 font-sans">
@@ -361,8 +381,8 @@ export default function GlobalHub() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-gray-800">
                     {regionInvestors.map((investor) => {
-                      const isSec = hasValidCik(investor.cik);
-                      const isPrivate = !isSec && (investor.market?.toLowerCase().includes('private') || investor.status === 'private');
+                      const isSec = isSecVerified(investor);
+                      const isPrivate = isManagerPrivate(investor);
 
                       return (
                         <Link

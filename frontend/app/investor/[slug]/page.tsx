@@ -37,11 +37,26 @@ interface ActivistStake {
   filing_accession: string;
 }
 
-// Strict Validation: Ensures CIK is not a dummy string and contains genuine numeric length
-const hasValidCik = (cik?: string | null) => {
-  if (!cik) return false;
-  const clean = String(cik).trim().toLowerCase();
-  return /\d{5,}/.test(clean) && !['0000000000', '0', 'null', 'nan', 'none', 'n/a'].includes(clean);
+// Strict Regulatory Logic Modules
+const isManagerPrivate = (inv: any) => {
+  return Boolean(
+    inv?.market?.toLowerCase().includes('private') ||
+    inv?.status === 'private' ||
+    inv?.investment_style?.toLowerCase().includes('private')
+  );
+};
+
+const isSecVerified = (inv: any) => {
+  if (!inv?.cik) return false;
+  const clean = String(inv.cik).trim().toLowerCase();
+  
+  if (!/\d{5,}/.test(clean)) return false;
+  if (/^(\d)\1+$/.test(clean)) return false;
+  
+  const dummySeeds = ['0000000000', '12345', '123456', '123456789', '987654321', '0', 'null', 'nan', 'none', 'n/a'];
+  if (dummySeeds.includes(clean)) return false;
+
+  return !isManagerPrivate(inv);
 };
 
 export default function InvestorDeepDive() {
@@ -65,7 +80,6 @@ export default function InvestorDeepDive() {
 
     async function fetchData() {
       try {
-        // 1. Fetch Investor Profile
         const { data: investorData, error: invError } = await supabase
           .from('investors')
           .select('*')
@@ -76,35 +90,28 @@ export default function InvestorDeepDive() {
         setInvestor(investorData);
 
         if (investorData) {
-          // Extract first name for flexible SEC matching (e.g., "Warren")
           const searchName = investorData.name.split(' ')[0];
-          
-          // Dynamically extract the first word of the parent company if in parentheses (e.g., "Berkshire" from "(Berkshire Hathaway)")
           const parentCompanyMatch = investorData.name.match(/\(([^)]+)\)/);
           const parentCompanySearch = parentCompanyMatch ? parentCompanyMatch[1].split(' ')[0] : searchName;
 
-          // 2. Fetch Current 13F Holdings
           const filingsPromise = supabase
             .from('filings')
             .select('*, metrics(volatility_90d, vol_is_estimated)')
             .eq('investor_id', investorData.id)
             .order('shares_held', { ascending: false });
 
-          // 3. Fetch History for Delta Math
           const historyPromise = supabase
             .from('holdings_history')
             .select('ticker, put_call, security_type, shares_held, period_of_report')
             .eq('investor_id', investorData.id)
             .order('period_of_report', { ascending: false });
 
-          // 4. Fetch Insider Trades (Matches manager name, investor_id, or parent company dynamically)
           const insiderPromise = supabase
             .from('insider_transactions')
             .select('*')
             .or(`investor_id.eq.${investorData.id},reporting_owner.ilike.%${searchName}%,reporting_owner.ilike.%${parentCompanySearch}%`)
             .order('transaction_date', { ascending: false });
 
-          // 5. Fetch Activist Stakes (Matches manager name, investor_id, or parent company dynamically)
           const activistPromise = supabase
             .from('activist_stakes')
             .select('*')
@@ -138,25 +145,20 @@ export default function InvestorDeepDive() {
     return <div className="min-h-screen bg-gray-950 flex items-center justify-center font-mono text-red-400">Investor profile not found.</div>;
   }
 
-  // Detect deregistered fund status (e.g., Scion Asset Management)
   const isDeregistered = investor.slug === 'scion-asset-management' || investor.status === 'deregistered';
   
-  // Apply Strict Regulatory CIK Validation
-  const isSecVerified = hasValidCik(investor.cik);
-  
-  // Detect private unlisted entity, strictly ensuring it has no SEC CIK
-  const isPrivate = !isSecVerified && (investor.market?.toLowerCase().includes('private') || investor.status === 'private');
+  // Unified Property resolution
+  const isPrivate = isManagerPrivate(investor);
+  const isSec = isSecVerified(investor);
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-8 font-sans">
       <div className="max-w-7xl mx-auto">
         
-        {/* Navigation Breadcrumb */}
         <Link href="/" className="text-gray-500 hover:text-white font-mono text-sm flex items-center gap-2 mb-8 transition-colors w-fit">
           <span>←</span> Back to Global Hub
         </Link>
 
-        {/* Deregistered Fund Lifecycle Notice */}
         {isDeregistered && (
           <div className="mb-8 bg-amber-950/40 border border-amber-800/80 p-4 rounded-xl flex items-start gap-3 text-amber-200 text-xs font-mono shadow-lg">
             <span className="text-amber-400 text-base">⚠️</span>
@@ -169,7 +171,6 @@ export default function InvestorDeepDive() {
           </div>
         )}
 
-        {/* Manager Header */}
         <div className="mb-8 border-b border-gray-800 pb-6">
           <h1 className="text-4xl font-bold text-white tracking-tight">{investor.name}</h1>
           <div className="flex flex-wrap gap-4 mt-3 items-center">
@@ -177,7 +178,7 @@ export default function InvestorDeepDive() {
             <span className="text-xs font-mono text-blue-400 bg-blue-950/30 border border-blue-900/50 px-2.5 py-1 rounded">
               {investor.region} | {isPrivate ? 'PRIVATE' : investor.market}
             </span>
-            {isSecVerified && (
+            {isSec && (
               <span className="text-xs font-mono text-emerald-400 bg-emerald-950/30 border border-emerald-900/50 px-2.5 py-1 rounded flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span> SEC EDGAR Verified
               </span>
@@ -185,7 +186,6 @@ export default function InvestorDeepDive() {
           </div>
         </div>
 
-        {/* Deep Dive Tabs */}
         <div className="flex items-center gap-2 font-mono text-xs mb-8 overflow-x-auto pb-2 border-b border-gray-800/50">
           <button
             onClick={() => setActiveTab('HOLDINGS')}
@@ -219,7 +219,6 @@ export default function InvestorDeepDive() {
           </button>
         </div>
 
-        {/* Tab 1: 13F Holdings View */}
         {activeTab === 'HOLDINGS' && (
           <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="px-6 py-4 border-b border-gray-800 bg-gray-900/50 flex justify-between items-center">
@@ -252,7 +251,6 @@ export default function InvestorDeepDive() {
                       const isCall = filing.put_call === 'CALL';
                       const isOption = isPut || isCall;
 
-                      // Match exact asset class in history for QoQ delta
                       const prevFiling = history.find(
                         (h) => 
                           h.ticker === filing.ticker && 
@@ -261,7 +259,6 @@ export default function InvestorDeepDive() {
                           h.period_of_report < filing.report_date
                       );
 
-                      // Suppress "NEW POSITION" if history has fewer than 2 distinct reporting periods
                       const uniquePeriods = new Set(history.map(h => h.period_of_report)).size;
                       const hasSufficientHistory = uniquePeriods >= 2;
 
@@ -291,7 +288,6 @@ export default function InvestorDeepDive() {
                         <tr key={filing.id} className="border-b border-gray-800 hover:bg-gray-800/25 transition-colors">
                           <td className="px-6 py-4 font-bold text-blue-400 font-mono">${filing.ticker}</td>
                           
-                          {/* Instrument Class Badge */}
                           <td className="px-6 py-4">
                             {isPut ? (
                               <span className="px-2.5 py-1 rounded text-[10px] font-mono font-bold bg-red-950 text-red-400 border border-red-800">
@@ -308,7 +304,6 @@ export default function InvestorDeepDive() {
                             )}
                           </td>
 
-                          {/* Disclosed Exposure */}
                           <td className="px-6 py-4 font-mono">
                             <span className="text-gray-100 font-bold">
                               {filing.shares_held !== null && filing.shares_held !== undefined ? filing.shares_held.toLocaleString() : 'N/A'}
@@ -338,7 +333,6 @@ export default function InvestorDeepDive() {
           </div>
         )}
 
-        {/* Tab 2: Insider Trades View */}
         {activeTab === 'INSIDER' && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {insiderTrades.length === 0 ? (
@@ -394,7 +388,6 @@ export default function InvestorDeepDive() {
           </div>
         )}
 
-        {/* Tab 3: Activist Stakes View */}
         {activeTab === 'ACTIVIST' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {activistStakes.length === 0 ? (
@@ -436,7 +429,6 @@ export default function InvestorDeepDive() {
           </div>
         )}
 
-        {/* Modal Logic for Position Analysis */}
         {selectedFiling && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
             <div className="bg-gray-900 border border-gray-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative max-h-[90vh] flex flex-col scale-in-95 duration-200">
@@ -468,7 +460,6 @@ export default function InvestorDeepDive() {
 
               <div className="space-y-4 text-sm text-gray-300 overflow-y-auto pr-1 flex-1">
                 
-                {/* Metrics Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800 flex flex-col justify-between">
                     <span className="text-gray-400 text-xs">
@@ -479,7 +470,6 @@ export default function InvestorDeepDive() {
                     </span>
                   </div>
                   
-                  {/* Volatility Metric */}
                   <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800 flex flex-col justify-between relative group">
                     <span className="text-gray-400 text-xs flex justify-between items-center">
                       90-Day Volatility (σ):
@@ -500,7 +490,6 @@ export default function InvestorDeepDive() {
                   </div>
                 </div>
 
-                {/* Corporate Headquarters Location Display */}
                 <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800">
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-gray-400 font-semibold text-xs">Primary Corporate Headquarters Location</span>
@@ -508,7 +497,6 @@ export default function InvestorDeepDive() {
                   <AssetMap ticker={selectedFiling.ticker} />
                 </div>
 
-                {/* Common Market Access (Broker Routing) */}
                 <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800">
                   <div className="flex justify-between items-center mb-2.5">
                     <span className="text-gray-400 font-semibold text-xs">Common Market Access:</span>
@@ -518,7 +506,6 @@ export default function InvestorDeepDive() {
                   </div>
                   <div className="grid grid-cols-2 gap-2.5">
                     
-                    {/* US-Listed Equities */}
                     {!selectedFiling.ticker.includes('.') && (
                       <>
                         <a href="https://www.interactivebrokers.com" target="_blank" rel="noopener noreferrer" className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-blue-500/50 p-2.5 rounded-lg flex flex-col group transition-all">
@@ -538,7 +525,6 @@ export default function InvestorDeepDive() {
                       </>
                     )}
 
-                    {/* African Equities */}
                     {(selectedFiling.ticker.endsWith('.LG') || selectedFiling.ticker.endsWith('.JO')) && (
                       <>
                         <a href="https://www.stanbicibtcstockbrokers.com" target="_blank" rel="noopener noreferrer" className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-purple-500/50 p-2.5 rounded-lg flex flex-col group transition-all">
@@ -558,7 +544,6 @@ export default function InvestorDeepDive() {
                       </>
                     )}
 
-                    {/* Other International Equities */}
                     {(selectedFiling.ticker.includes('.') && !selectedFiling.ticker.endsWith('.LG') && !selectedFiling.ticker.endsWith('.JO')) && (
                       <a href="https://www.interactivebrokers.com" target="_blank" rel="noopener noreferrer" className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-blue-500/50 p-2.5 rounded-lg flex flex-col group transition-all col-span-2">
                         <div className="flex justify-between items-center">
