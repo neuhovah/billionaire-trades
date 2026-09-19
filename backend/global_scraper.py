@@ -8,6 +8,7 @@ from edgar import set_identity, Company
 from supabase import create_client, Client
 from dotenv import load_dotenv, find_dotenv
 
+# Load Environment Variables from root
 load_dotenv(find_dotenv())
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") 
@@ -87,100 +88,114 @@ def get_real_volatility(ticker: str):
         print(f"  ⚠️ Volatility calculation error for {ticker}: {e}")
         return None
 
-def process_sec_filing(investor_id, investor_name, cik, filing):
-    try:
-        holdings = filing.obj().holdings
-        holdings.columns = holdings.columns.str.lower()
+def process_merged_portfolio(investor_id, investor_name, cik, target_filings, latest_period):
+    """Processes base filings and amendments chronologically to build a unified portfolio view."""
+    merged_portfolio = {}
+    latest_accession = target_filings[-1].accession_no
+    report_date = str(latest_period)
+    
+    # Use the filing date of the MOST RECENT amendment for historical drift protection
+    latest_filing_date_obj = datetime.strptime(str(target_filings[-1].filing_date), "%Y-%m-%d")
+    is_historical = latest_filing_date_obj < (datetime.now() - timedelta(days=90))
+    
+    if is_historical:
+        print(f"  🕰️ Historical period detected ({report_date}). Ingesting data but suppressing Telegram alerts.")
         
-        # 1. FIX: Do NOT drop options. Extract the exact instrument type instead.
-        if 'putcall' not in holdings.columns:
-            holdings['putcall'] = ''
-        if 'sshprnamttype' not in holdings.columns:
-            holdings['sshprnamttype'] = 'SH'
-            
-        # Clean strings to prevent grouping errors (e.g., 'Put', 'PUT ', 'put')
-        holdings['putcall'] = holdings['putcall'].fillna('').astype(str).str.strip().str.upper()
-        holdings['sshprnamttype'] = holdings['sshprnamttype'].fillna('SH').astype(str).str.strip().str.upper()
-            
-        report_date = str(filing.period_of_report)
-        accession_no = filing.accession_no
-        
-        clean_accession = accession_no.replace("-", "")
-        sec_url = f"https://www.sec.gov/Archives/edgar/data/{str(cik).lstrip('0')}/{clean_accession}/{accession_no}-index.html"
-        
-        filing_date_obj = datetime.strptime(str(filing.filing_date), "%Y-%m-%d")
-        is_historical = filing_date_obj < (datetime.now() - timedelta(days=90))
-        if is_historical:
-            print(f"  🕰️ Historical filing detected ({filing.filing_date}). Ingesting data but suppressing Telegram alerts.")
-        
-        # 2. AGGREGATE: Group by Ticker + Option Type + Asset Type to ensure Puts/Calls don't overwrite Stock
-        agg_holdings = holdings.groupby(['ticker', 'putcall', 'sshprnamttype'])['sharesprnamount'].sum().reset_index()
+    clean_accession = latest_accession.replace("-", "")
+    sec_url = f"https://www.sec.gov/Archives/edgar/data/{str(cik).lstrip('0')}/{clean_accession}/{latest_accession}-index.html"
 
-        for _, row in agg_holdings.iterrows():
-            ticker = str(row['ticker']).strip().upper()
-            if ticker == 'NAN' or not ticker: continue
-            
-            put_call = row['putcall']
-            sec_type = row['sshprnamttype']
-            shares = int(float(row['sharesprnamount']))
-            
-            instrument_label = put_call if put_call else "COMMON"
-            print(f"  🔍 Processing {ticker} | Type: {instrument_label} | Total: {shares:,}")
-            
-            # 3. QUERY HISTORY: Fetch exact match (Ticker + PutCall + SecType)
-            prev_record = supabase.table("holdings_history")\
-                .select("shares_held")\
-                .eq("investor_id", investor_id)\
-                .eq("ticker", ticker)\
-                .eq("put_call", put_call)\
-                .eq("security_type", sec_type)\
-                .order("period_of_report", desc=True)\
-                .limit(1).execute()
+    # 1. MERGE LOGIC: Chronologically overlay base filings and amendments
+    for filing in target_filings:
+        try:
+            holdings = filing.obj().holdings
+            if holdings is None or holdings.empty:
+                continue
                 
-            prev_shares = prev_record.data[0]['shares_held'] if prev_record.data else 0
-
-            # 4. UPSERT HISTORY: Uses new composite unique constraint
-            supabase.table("holdings_history").upsert({
-                "investor_id": investor_id,
-                "ticker": ticker,
-                "put_call": put_call,
-                "security_type": sec_type,
-                "shares_held": shares,
-                "period_of_report": report_date,
-                "filing_accession": accession_no,
-                "data_source": "sec_edgar"
-            }, on_conflict="investor_id, ticker, period_of_report, filing_accession, put_call, security_type").execute()
-
-            # 5. UPSERT FILINGS: Uses new composite unique constraint
-            filing_response = supabase.table("filings").upsert({
-                "investor_id": investor_id,
-                "filing_accession": accession_no,
-                "ticker": ticker,
-                "put_call": put_call,
-                "security_type": sec_type,
-                "shares_held": shares,
-                "report_date": report_date,
-                "data_source": "sec_edgar"
-            }, on_conflict="investor_id, filing_accession, ticker, put_call, security_type").execute()
-
-            # 6. UPSERT METRICS
-            vol_90d = get_real_volatility(ticker)
-            is_estimated = vol_90d is None
+            holdings.columns = holdings.columns.str.lower()
             
-            if filing_response.data:
-                supabase.table("metrics").upsert({
-                    "filing_id": filing_response.data[0]['id'], 
-                    "ticker": ticker, 
-                    "volatility_90d": vol_90d if vol_90d else 0.0,
-                    "vol_is_estimated": is_estimated
-                }, on_conflict="filing_id, ticker").execute()
-
-            # 7. FIRE WEBHOOK
-            if not is_historical:
-                send_delta_alert(investor_name, ticker, put_call, sec_type, shares, prev_shares, report_date, sec_url)
+            if 'putcall' not in holdings.columns:
+                holdings['putcall'] = ''
+            if 'sshprnamttype' not in holdings.columns:
+                holdings['sshprnamttype'] = 'SH'
+                
+            holdings['putcall'] = holdings['putcall'].fillna('').astype(str).str.strip().str.upper()
+            holdings['sshprnamttype'] = holdings['sshprnamttype'].fillna('SH').astype(str).str.strip().str.upper()
             
-    except Exception as e:
-        print(f"  ❌ Error processing portfolio for {investor_name}: {e}")
+            agg_holdings = holdings.groupby(['ticker', 'putcall', 'sshprnamttype'])['sharesprnamount'].sum().reset_index()
+            
+            for _, row in agg_holdings.iterrows():
+                ticker = str(row['ticker']).strip().upper()
+                if ticker == 'NAN' or not ticker: continue
+                put_call = row['putcall']
+                sec_type = row['sshprnamttype']
+                shares = int(float(row['sharesprnamount']))
+                
+                # Overwrites base data with amendment data if it's a restatement, or adds it if it's a new addition
+                merged_portfolio[(ticker, put_call, sec_type)] = shares
+        except Exception as e:
+            print(f"  ⚠️ Error parsing holdings for accession {filing.accession_no}: {e}")
+
+    # 2. STATE CLEANUP: Purge old snapshot data to prevent ghost duplicates from previous quarters
+    # This guarantees the `filings` table ONLY holds the absolute latest unified portfolio
+    supabase.table("filings").delete().eq("investor_id", investor_id).execute()
+
+    # 3. DB UPSERT & ALERTS LOOP
+    for (ticker, put_call, sec_type), shares in merged_portfolio.items():
+        instrument_label = put_call if put_call else "COMMON"
+        print(f"  🔍 Processing {ticker} | Type: {instrument_label} | Total: {shares:,}")
+        
+        # QUERY HISTORY: Delta Math requires previous quarter (strictly less than current report_date)
+        prev_record = supabase.table("holdings_history")\
+            .select("shares_held")\
+            .eq("investor_id", investor_id)\
+            .eq("ticker", ticker)\
+            .eq("put_call", put_call)\
+            .eq("security_type", sec_type)\
+            .lt("period_of_report", report_date)\
+            .order("period_of_report", desc=True)\
+            .limit(1).execute()
+            
+        prev_shares = prev_record.data[0]['shares_held'] if prev_record.data else 0
+
+        # UPSERT HISTORY: Append to Immutable Log
+        supabase.table("holdings_history").upsert({
+            "investor_id": investor_id,
+            "ticker": ticker,
+            "put_call": put_call,
+            "security_type": sec_type,
+            "shares_held": shares,
+            "period_of_report": report_date,
+            "filing_accession": latest_accession,
+            "data_source": "sec_edgar"
+        }, on_conflict="investor_id, ticker, period_of_report, filing_accession, put_call, security_type").execute()
+
+        # UPSERT FILINGS: Update Current State View
+        filing_response = supabase.table("filings").upsert({
+            "investor_id": investor_id,
+            "filing_accession": latest_accession,
+            "ticker": ticker,
+            "put_call": put_call,
+            "security_type": sec_type,
+            "shares_held": shares,
+            "report_date": report_date,
+            "data_source": "sec_edgar"
+        }, on_conflict="investor_id, filing_accession, ticker, put_call, security_type").execute()
+
+        # UPSERT METRICS
+        vol_90d = get_real_volatility(ticker)
+        is_estimated = vol_90d is None
+        
+        if filing_response.data:
+            supabase.table("metrics").upsert({
+                "filing_id": filing_response.data[0]['id'], 
+                "ticker": ticker, 
+                "volatility_90d": vol_90d if vol_90d else 0.0,
+                "vol_is_estimated": is_estimated
+            }, on_conflict="filing_id, ticker").execute()
+
+        # FIRE WEBHOOK
+        if not is_historical:
+            send_delta_alert(investor_name, ticker, put_call, sec_type, shares, prev_shares, report_date, sec_url)
 
 def run_pipeline():
     print("=== STARTING STRICT SEC EDGAR INGESTION PIPELINE ===")
@@ -208,10 +223,17 @@ def run_pipeline():
                 print(f"  ⚠️ No active 13F filings found. Skipping.")
                 continue
                 
+            # ENTERPRISE FIX: Group by period_of_report to process base filings AND their amendments
             all_filings.sort(key=lambda x: str(x.period_of_report), reverse=True)
-            latest_filing = all_filings[0]
+            latest_period = all_filings[0].period_of_report
             
-            process_sec_filing(investor['id'], investor['name'], investor['cik'], latest_filing)
+            # Isolate all filings strictly for this latest reporting period
+            target_filings = [f for f in all_filings if f.period_of_report == latest_period]
+            
+            # Sort chronologically by filing date so base filings are processed *before* amendments
+            target_filings.sort(key=lambda x: str(x.filing_date))
+            
+            process_merged_portfolio(investor['id'], investor['name'], investor['cik'], target_filings, latest_period)
             
         except Exception as e:
             print(f"❌ SEC Fetch Error for {investor['name']}: {e}")
