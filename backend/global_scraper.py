@@ -1,6 +1,8 @@
 import os
 import time
 import requests
+import contextlib
+import io
 import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta
@@ -36,7 +38,6 @@ def send_delta_alert(investor_name: str, ticker: str, put_call: str, sec_type: s
         pct = (diff / prev_shares) * 100
         action = f"🟢 ADDED (+{pct:.1f}%)" if diff > 0 else f"🔴 TRIMMED ({pct:.1f}%)"
 
-    # Format the asset label to explicitly call out Puts/Calls vs Common Stock
     asset_display = f"${ticker}"
     shares_label = "Shares"
     
@@ -64,28 +65,48 @@ def send_delta_alert(investor_name: str, ticker: str, put_call: str, sec_type: s
         "disable_web_page_preview": True
     }
     
-    try:
-        response = requests.post(url, json=payload, timeout=10)
-        if response.status_code == 200:
-            print(f"  📢 Alert Broadcasted: {investor_name} {action} {asset_display}")
-            time.sleep(3.5)
-        else:
-            print(f"  ❌ Telegram API Error: {response.text}")
-    except Exception as e:
-        print(f"  ❌ Connection Failed: {e}")
+    # Resilient Retry Loop to prevent 429 Rate-Limits & 502 Bad Gateway failures
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, json=payload, timeout=12)
+            if response.status_code == 200:
+                print(f"  📢 Alert Broadcasted: {investor_name} {action} {asset_display}")
+                time.sleep(1.2)  # Controlled rate-limit delay
+                return
+            elif response.status_code == 429:
+                retry_after = response.json().get("parameters", {}).get("retry_after", 5)
+                print(f"  ⚠️ Telegram Rate Limit (429). Backing off for {retry_after + 1}s...")
+                time.sleep(retry_after + 1)
+            elif response.status_code in [502, 503, 504]:
+                print(f"  ⚠️ Telegram Gateway Error ({response.status_code}). Retrying ({attempt + 1}/{max_retries})...")
+                time.sleep(3)
+            else:
+                print(f"  ❌ Telegram API Error ({response.status_code}): {response.text}")
+                return
+        except requests.exceptions.RequestException as e:
+            print(f"  ⚠️ Network Timeout/Error: {e}. Retrying ({attempt + 1}/{max_retries})...")
+            time.sleep(3)
 
 def get_real_volatility(ticker: str):
     try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="90d")
+        # Standardize dual-class tickers for Yahoo Finance (e.g., LENB -> LEN-B)
+        yf_ticker = ticker
+        if len(ticker) == 5 and ticker.endswith(('A', 'B', 'K')):
+            yf_ticker = f"{ticker[:-1]}-{ticker[-1]}"
+            
+        # Suppress yfinance stdout/stderr printing
+        with contextlib.redirect_stderr(io.StringIO()):
+            stock = yf.Ticker(yf_ticker)
+            hist = stock.history(period="90d")
+            
         if not hist.empty and len(hist) >= 45:
             hist['Returns'] = hist['Close'].pct_change()
             vol_90d = hist['Returns'].std() * np.sqrt(252)
             if not np.isnan(vol_90d):
                 return round(float(vol_90d * 100), 2)
         return None
-    except Exception as e:
-        print(f"  ⚠️ Volatility calculation error for {ticker}: {e}")
+    except Exception:
         return None
 
 def process_merged_portfolio(investor_id, investor_name, cik, target_filings, latest_period):
@@ -94,7 +115,6 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
     latest_accession = target_filings[-1].accession_no
     report_date = str(latest_period)
     
-    # Use the filing date of the MOST RECENT amendment for historical drift protection
     latest_filing_date_obj = datetime.strptime(str(target_filings[-1].filing_date), "%Y-%m-%d")
     is_historical = latest_filing_date_obj < (datetime.now() - timedelta(days=90))
     
@@ -103,6 +123,16 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
         
     clean_accession = latest_accession.replace("-", "")
     sec_url = f"https://www.sec.gov/Archives/edgar/data/{str(cik).lstrip('0')}/{clean_accession}/{latest_accession}-index.html"
+
+    # Check database to see if history exists for this investor (Initial Seeding Protection)
+    existing_history_count = supabase.table("holdings_history")\
+        .select("id", count="exact")\
+        .eq("investor_id", investor_id)\
+        .execute().count or 0
+
+    is_initial_seed = existing_history_count == 0
+    if is_initial_seed:
+        print(f"  🌱 Initial Seeding detected for {investor_name}. Suppressing bulk initial alerts.")
 
     # 1. MERGE LOGIC: Chronologically overlay base filings and amendments
     for filing in target_filings:
@@ -130,13 +160,11 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
                 sec_type = row['sshprnamttype']
                 shares = int(float(row['sharesprnamount']))
                 
-                # Overwrites base data with amendment data if it's a restatement, or adds it if it's a new addition
                 merged_portfolio[(ticker, put_call, sec_type)] = shares
         except Exception as e:
             print(f"  ⚠️ Error parsing holdings for accession {filing.accession_no}: {e}")
 
-    # 2. STATE CLEANUP: Purge old snapshot data to prevent ghost duplicates from previous quarters
-    # This guarantees the `filings` table ONLY holds the absolute latest unified portfolio
+    # 2. STATE CLEANUP: Purge current snapshot view to mirror unified portfolio
     supabase.table("filings").delete().eq("investor_id", investor_id).execute()
 
     # 3. DB UPSERT & ALERTS LOOP
@@ -144,7 +172,7 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
         instrument_label = put_call if put_call else "COMMON"
         print(f"  🔍 Processing {ticker} | Type: {instrument_label} | Total: {shares:,}")
         
-        # QUERY HISTORY: Delta Math requires previous quarter (strictly less than current report_date)
+        # QUERY HISTORY: Fetch prior period for delta math
         prev_record = supabase.table("holdings_history")\
             .select("shares_held")\
             .eq("investor_id", investor_id)\
@@ -157,7 +185,7 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
             
         prev_shares = prev_record.data[0]['shares_held'] if prev_record.data else 0
 
-        # UPSERT HISTORY: Append to Immutable Log
+        # UPSERT HISTORY
         supabase.table("holdings_history").upsert({
             "investor_id": investor_id,
             "ticker": ticker,
@@ -169,7 +197,7 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
             "data_source": "sec_edgar"
         }, on_conflict="investor_id, ticker, period_of_report, filing_accession, put_call, security_type").execute()
 
-        # UPSERT FILINGS: Update Current State View
+        # UPSERT FILINGS
         filing_response = supabase.table("filings").upsert({
             "investor_id": investor_id,
             "filing_accession": latest_accession,
@@ -193,8 +221,8 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
                 "vol_is_estimated": is_estimated
             }, on_conflict="filing_id, ticker").execute()
 
-        # FIRE WEBHOOK
-        if not is_historical:
+        # FIRE WEBHOOK: Suppress if historical or during initial baseline seeding
+        if not is_historical and not is_initial_seed:
             send_delta_alert(investor_name, ticker, put_call, sec_type, shares, prev_shares, report_date, sec_url)
 
 def run_pipeline():
@@ -223,14 +251,10 @@ def run_pipeline():
                 print(f"  ⚠️ No active 13F filings found. Skipping.")
                 continue
                 
-            # ENTERPRISE FIX: Group by period_of_report to process base filings AND their amendments
             all_filings.sort(key=lambda x: str(x.period_of_report), reverse=True)
             latest_period = all_filings[0].period_of_report
             
-            # Isolate all filings strictly for this latest reporting period
             target_filings = [f for f in all_filings if f.period_of_report == latest_period]
-            
-            # Sort chronologically by filing date so base filings are processed *before* amendments
             target_filings.sort(key=lambda x: str(x.filing_date))
             
             process_merged_portfolio(investor['id'], investor['name'], investor['cik'], target_filings, latest_period)
