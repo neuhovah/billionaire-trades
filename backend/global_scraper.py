@@ -33,6 +33,8 @@ def send_delta_alert(investor_name: str, ticker: str, put_call: str, sec_type: s
 
     if prev_shares == 0:
         action = "🟢 NEW POSITION"
+    elif current_shares == 0:
+        action = "🔴 EXITED POSITION"
     else:
         diff = current_shares - prev_shares
         pct = (diff / prev_shares) * 100
@@ -167,7 +169,44 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
     # 2. STATE CLEANUP: Purge current snapshot view to mirror unified portfolio
     supabase.table("filings").delete().eq("investor_id", investor_id).execute()
 
-    # 3. DB UPSERT & ALERTS LOOP
+    # 3. DETECT FULL EXITS: Query positions held in the immediate prior quarter
+    prior_period_query = supabase.table("holdings_history")\
+        .select("ticker, put_call, security_type, shares_held")\
+        .eq("investor_id", investor_id)\
+        .lt("period_of_report", report_date)\
+        .order("period_of_report", desc=True)\
+        .execute()
+
+    if prior_period_query.data:
+        prior_tickers = {}
+        for row in prior_period_query.data:
+            key = (row['ticker'], row.get('put_call') or '', row.get('security_type') or 'SH')
+            # Store the shares if this is the most recent prior record
+            if key not in prior_tickers and row['shares_held'] > 0:
+                prior_tickers[key] = row['shares_held']
+
+        # Check for assets held previously that are missing from current merged_portfolio
+        for (p_ticker, p_put_call, p_sec_type), p_shares in prior_tickers.items():
+            if (p_ticker, p_put_call, p_sec_type) not in merged_portfolio:
+                print(f"  🔴 EXITED POSITION DETECTED: {p_ticker} (Was {p_shares:,} shares -> Now 0)")
+                
+                # Record zero-share exit in history
+                supabase.table("holdings_history").upsert({
+                    "investor_id": investor_id,
+                    "ticker": p_ticker,
+                    "put_call": p_put_call,
+                    "security_type": p_sec_type,
+                    "shares_held": 0,
+                    "period_of_report": report_date,
+                    "filing_accession": latest_accession,
+                    "data_source": "sec_edgar"
+                }, on_conflict="investor_id, ticker, period_of_report, filing_accession, put_call, security_type").execute()
+
+                # Trigger Exit Webhook if not historical/initial seed
+                if not is_historical and not is_initial_seed:
+                    send_delta_alert(investor_name, p_ticker, p_put_call, p_sec_type, 0, p_shares, report_date, sec_url)
+
+    # 4. DB UPSERT & ALERTS LOOP FOR CURRENT POSITIONS
     for (ticker, put_call, sec_type), shares in merged_portfolio.items():
         instrument_label = put_call if put_call else "COMMON"
         print(f"  🔍 Processing {ticker} | Type: {instrument_label} | Total: {shares:,}")
