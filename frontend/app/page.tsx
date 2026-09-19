@@ -86,7 +86,8 @@ export default function GlobalHub() {
       investor.market.toLowerCase().includes(searchLower) ||
       investor.region.toLowerCase().includes(searchLower);
 
-    const isSecVerified = investor.market === 'US Equities';
+    // SEC Verification is now based purely on regulatory filing status (CIK), not geography
+    const isSecVerified = !!investor.cik;
     const matchesMarket =
       marketFilter === 'ALL' ||
       (marketFilter === 'SEC_VERIFIED' && isSecVerified) ||
@@ -103,7 +104,8 @@ export default function GlobalHub() {
     return acc;
   }, {});
 
-  const secVerifiedCount = investors.filter((i) => i.market === 'US Equities').length;
+  // Dynamic count of all managers with an SEC CIK globally
+  const secVerifiedCount = investors.filter((i) => !!i.cik).length;
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-6 md:p-10 font-sans">
@@ -362,7 +364,8 @@ export default function GlobalHub() {
               return (
                 <div key={region} className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden shadow-xl">
                   {/* Region Header */}
-<div className="px-6 py-4 bg-linear-to-r from-gray-900 via-gray-900 to-gray-800/80 border-b border-gray-800 flex justify-between items-center">
+                  <div className="px-6 py-4 bg-linear-to-r from-gray-900 via-gray-900 to-gray-800/80 border-b border-gray-800 flex justify-between items-center">
+                    <h2 className="text-xl font-bold text-white tracking-wide">{region}</h2>
                     <span className="text-[11px] font-mono text-gray-400 bg-gray-950 px-3 py-1 rounded-md border border-gray-800">
                       {regionInvestors.length} {regionInvestors.length === 1 ? 'Manager' : 'Managers'}
                     </span>
@@ -371,8 +374,8 @@ export default function GlobalHub() {
                   {/* Manager Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-gray-800">
                     {regionInvestors.map((investor) => {
-                      const isSec = investor.market === 'US Equities';
-                      const isPrivate = investor.market === 'Private' || investor.status === 'private';
+                      const isSec = !!investor.cik;
+                      const isPrivate = !isSec && (investor.market?.toLowerCase().includes('private') || investor.status === 'private');
 
                       return (
                         <Link
@@ -406,8 +409,8 @@ export default function GlobalHub() {
                           <div className="flex justify-between items-center pt-4 border-t border-gray-800/60 font-mono text-xs">
                             {/* Dynamic Card Status Line */}
                             {isPrivate ? (
-                              <span className="text-[10px] font-mono text-gray-500 flex items-center gap-1.5">
-                                <span className="w-1.5 h-1.5 rounded-full bg-gray-600"></span>
+                              <span className="text-[10px] font-mono text-gray-400 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
                                 PRIVATE — NO DISCLOSURE
                               </span>
                             ) : isSec ? (
