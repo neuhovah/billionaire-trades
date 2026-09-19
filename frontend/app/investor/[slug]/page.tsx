@@ -37,6 +37,13 @@ interface ActivistStake {
   filing_accession: string;
 }
 
+// Strict Validation: Ensures CIK is not a dummy string and contains genuine numeric length
+const hasValidCik = (cik?: string | null) => {
+  if (!cik) return false;
+  const clean = String(cik).trim().toLowerCase();
+  return /\d{5,}/.test(clean) && !['0000000000', '0', 'null', 'nan', 'none', 'n/a'].includes(clean);
+};
+
 export default function InvestorDeepDive() {
   const params = useParams();
   const slug = params?.slug as string;
@@ -133,8 +140,12 @@ export default function InvestorDeepDive() {
 
   // Detect deregistered fund status (e.g., Scion Asset Management)
   const isDeregistered = investor.slug === 'scion-asset-management' || investor.status === 'deregistered';
-  // Detect private unlisted entity
-  const isPrivate = investor.market === 'Private' || investor.status === 'private';
+  
+  // Apply Strict Regulatory CIK Validation
+  const isSecVerified = hasValidCik(investor.cik);
+  
+  // Detect private unlisted entity, strictly ensuring it has no SEC CIK
+  const isPrivate = !isSecVerified && (investor.market?.toLowerCase().includes('private') || investor.status === 'private');
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-8 font-sans">
@@ -164,9 +175,9 @@ export default function InvestorDeepDive() {
           <div className="flex flex-wrap gap-4 mt-3 items-center">
             <p className="text-gray-400 text-lg">{investor.investment_style}</p>
             <span className="text-xs font-mono text-blue-400 bg-blue-950/30 border border-blue-900/50 px-2.5 py-1 rounded">
-              {investor.region} | {investor.market}
+              {investor.region} | {isPrivate ? 'PRIVATE' : investor.market}
             </span>
-            {investor.market === 'US Equities' && (
+            {isSecVerified && (
               <span className="text-xs font-mono text-emerald-400 bg-emerald-950/30 border border-emerald-900/50 px-2.5 py-1 rounded flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span> SEC EDGAR Verified
               </span>
