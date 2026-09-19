@@ -18,7 +18,7 @@ interface Investor {
   investment_style: string;
   slug: string;
   cik?: string;
-  status?: string; // Added to support 'private' check
+  status?: string; 
 }
 
 interface InsiderTransaction {
@@ -42,10 +42,11 @@ interface ActivistStake {
   filing_accession: string;
 }
 
-// Strict validation: Ensures CIK exists and contains at least 5 numeric digits 
-// (Filters out 'null', 'None', 'N/A', or blank spaces)
+// Strict Validation: Ensures CIK is not a dummy string and contains genuine numeric length
 const hasValidCik = (cik?: string | null) => {
-  return Boolean(cik && /\d{5,}/.test(String(cik).trim()));
+  if (!cik) return false;
+  const clean = String(cik).trim().toLowerCase();
+  return /\d{5,}/.test(clean) && !['0000000000', '0', 'null', 'nan', 'none', 'n/a'].includes(clean);
 };
 
 export default function GlobalHub() {
@@ -61,7 +62,6 @@ export default function GlobalHub() {
   useEffect(() => {
     async function fetchDashboardData() {
       try {
-        // Fetch Investors, Insider Trades, and Activist Stakes concurrently
         const [investorsRes, insidersRes, activistsRes] = await Promise.all([
           supabase.from('investors').select('*').order('name'),
           supabase.from('insider_transactions').select('*').order('transaction_date', { ascending: false }).limit(15),
@@ -83,7 +83,6 @@ export default function GlobalHub() {
     fetchDashboardData();
   }, []);
 
-  // Filter Logic across Search Query and Market Verification Tier
   const filteredInvestors = investors.filter((investor) => {
     const searchLower = searchTerm.toLowerCase();
     const matchesSearch =
@@ -92,7 +91,6 @@ export default function GlobalHub() {
       investor.market.toLowerCase().includes(searchLower) ||
       investor.region.toLowerCase().includes(searchLower);
 
-    // SEC Verification strictly requires a valid numeric CIK
     const isSecVerified = hasValidCik(investor.cik);
     const matchesMarket =
       marketFilter === 'ALL' ||
@@ -102,7 +100,6 @@ export default function GlobalHub() {
     return matchesSearch && matchesMarket;
   });
 
-  // Group filtered results by region
   const groupedInvestors = filteredInvestors.reduce((acc: Record<string, Investor[]>, investor) => {
     const region = investor.region || 'Global';
     if (!acc[region]) acc[region] = [];
@@ -110,14 +107,12 @@ export default function GlobalHub() {
     return acc;
   }, {});
 
-  // Dynamic count of genuinely verified managers
   const secVerifiedCount = investors.filter((i) => hasValidCik(i.cik)).length;
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-6 md:p-10 font-sans">
       <div className="max-w-7xl mx-auto space-y-8">
         
-        {/* Terminal Header */}
         <div className="border-b border-gray-800 pb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
           <div>
             <div className="flex items-center gap-3 mb-2">
@@ -145,10 +140,7 @@ export default function GlobalHub() {
           </div>
         </div>
 
-        {/* Navigation View Tabs & Global Search */}
         <div className="bg-gray-900/80 border border-gray-800 p-4 rounded-2xl space-y-4 md:space-y-0 md:flex md:items-center md:justify-between md:gap-4 shadow-xl">
-          
-          {/* View Toggle Tabs */}
           <div className="flex items-center gap-2 font-mono text-xs">
             <button
               onClick={() => setActiveTab('MANAGERS')}
@@ -173,10 +165,8 @@ export default function GlobalHub() {
             </button>
           </div>
 
-          {/* Conditional Controls based on active tab */}
           {activeTab === 'MANAGERS' ? (
             <div className="flex flex-col md:flex-row items-center gap-3 flex-1 justify-end">
-              {/* Real-time Search Input */}
               <div className="relative w-full md:w-72">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-500">
                   🔍
@@ -190,7 +180,6 @@ export default function GlobalHub() {
                 />
               </div>
 
-              {/* Filter Pills */}
               <div className="flex items-center gap-2 font-mono text-xs w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
                 <button
                   onClick={() => setMarketFilter('ALL')}
@@ -221,7 +210,6 @@ export default function GlobalHub() {
           )}
         </div>
 
-        {/* Content Render Area */}
         {loading ? (
           <div className="flex justify-center items-center h-64 bg-gray-900/40 border border-gray-800/60 rounded-2xl">
             <div className="text-gray-500 font-mono animate-pulse text-sm">
@@ -229,10 +217,7 @@ export default function GlobalHub() {
             </div>
           </div>
         ) : activeTab === 'SIGNALS' ? (
-          /* LIVE SIGNALS STREAM VIEW */
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            
-            {/* Form 4 Real-Time Insider Transactions Column */}
             <div className="space-y-4">
               <div className="flex justify-between items-center bg-gray-900 border border-gray-800 px-5 py-3 rounded-xl">
                 <h2 className="text-lg font-bold text-white flex items-center gap-2">
@@ -298,7 +283,6 @@ export default function GlobalHub() {
               )}
             </div>
 
-            {/* 13D/G Activist Stakes Column */}
             <div className="space-y-4">
               <div className="flex justify-between items-center bg-gray-900 border border-gray-800 px-5 py-3 rounded-xl">
                 <h2 className="text-lg font-bold text-white flex items-center gap-2">
@@ -361,7 +345,6 @@ export default function GlobalHub() {
             </button>
           </div>
         ) : (
-          /* MANAGERS DIRECTORY VIEW */
           <div className="space-y-10">
             {['North America', 'Europe', 'Asia-Pacific', 'Africa', 'Middle East & Emerging'].map((region) => {
               const regionInvestors = groupedInvestors[region];
@@ -369,7 +352,6 @@ export default function GlobalHub() {
 
               return (
                 <div key={region} className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden shadow-xl">
-                  {/* Region Header */}
                   <div className="px-6 py-4 bg-linear-to-r from-gray-900 via-gray-900 to-gray-800/80 border-b border-gray-800 flex justify-between items-center">
                     <h2 className="text-xl font-bold text-white tracking-wide">{region}</h2>
                     <span className="text-[11px] font-mono text-gray-400 bg-gray-950 px-3 py-1 rounded-md border border-gray-800">
@@ -377,7 +359,6 @@ export default function GlobalHub() {
                     </span>
                   </div>
 
-                  {/* Manager Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-gray-800">
                     {regionInvestors.map((investor) => {
                       const isSec = hasValidCik(investor.cik);
@@ -413,7 +394,6 @@ export default function GlobalHub() {
                           </div>
 
                           <div className="flex justify-between items-center pt-4 border-t border-gray-800/60 font-mono text-xs">
-                            {/* Dynamic Card Status Line */}
                             {isPrivate ? (
                               <span className="text-[10px] font-mono text-gray-500 flex items-center gap-1.5">
                                 <span className="w-1.5 h-1.5 rounded-full bg-gray-600"></span>
@@ -443,7 +423,6 @@ export default function GlobalHub() {
             })}
           </div>
         )}
-
       </div>
     </div>
   );
