@@ -69,7 +69,10 @@ export default function InvestorDeepDive() {
         setInvestor(investorData);
 
         if (investorData) {
-          // 2. Fetch Current 13F Holdings (including put_call & security_type)
+          // Extract first name for flexible SEC filing matching (e.g., "Warren")
+          const searchName = investorData.name.split(' ')[0];
+
+          // 2. Fetch Current 13F Holdings
           const filingsPromise = supabase
             .from('filings')
             .select('*, metrics(volatility_90d, vol_is_estimated)')
@@ -83,18 +86,18 @@ export default function InvestorDeepDive() {
             .eq('investor_id', investorData.id)
             .order('period_of_report', { ascending: false });
 
-          // 4. Fetch Insider Trades
+          // 4. Fetch Insider Trades (Flexible wildcard matching for SEC entities)
           const insiderPromise = supabase
             .from('insider_transactions')
             .select('*')
-            .eq('reporting_owner', investorData.name)
+            .ilike('reporting_owner', `%${searchName}%`)
             .order('transaction_date', { ascending: false });
 
-          // 5. Fetch Activist Stakes
+          // 5. Fetch Activist Stakes (Match by ID or flexible SEC entity name)
           const activistPromise = supabase
             .from('activist_stakes')
             .select('*')
-            .eq('investor_id', investorData.id)
+            .or(`investor_id.eq.${investorData.id},reporting_owner.ilike.%${searchName}%`)
             .order('filing_date', { ascending: false });
 
           const [filingsRes, historyRes, insiderRes, activistRes] = await Promise.all([
