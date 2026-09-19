@@ -249,7 +249,9 @@ export default function InvestorDeepDive() {
 
                       let diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-800 text-gray-400 border border-gray-700">—</span>;
                       
-                      if (hasSufficientHistory) {
+                      if (filing.shares_held === 0) {
+                        diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-red-950 text-red-400 border border-red-800 font-bold">🔴 EXITED (100%)</span>;
+                      } else if (hasSufficientHistory) {
                         if (prevFiling && prevFiling.shares_held) {
                           const diff = filing.shares_held - prevFiling.shares_held;
                           const pct = ((diff / prevFiling.shares_held) * 100).toFixed(1);
@@ -290,7 +292,9 @@ export default function InvestorDeepDive() {
 
                           {/* Disclosed Exposure */}
                           <td className="px-6 py-4 font-mono">
-                            <span className="text-gray-100 font-bold">{filing.shares_held ? filing.shares_held.toLocaleString() : 'N/A'}</span>
+                            <span className="text-gray-100 font-bold">
+                              {filing.shares_held !== null && filing.shares_held !== undefined ? filing.shares_held.toLocaleString() : 'N/A'}
+                            </span>
                             <span className="text-gray-500 text-[11px] block font-sans">
                               {isOption ? 'Notional Underlying Shares' : 'Shares Owned Outright'}
                             </span>
@@ -453,7 +457,7 @@ export default function InvestorDeepDive() {
                       {selectedFiling.put_call ? 'Notional Underlying Exposure:' : 'Institutional Shares Held:'}
                     </span>
                     <span className="font-mono text-emerald-400 font-bold text-base mt-1">
-                      {selectedFiling.shares_held ? selectedFiling.shares_held.toLocaleString() : 'N/A'}
+                      {selectedFiling.shares_held !== null && selectedFiling.shares_held !== undefined ? selectedFiling.shares_held.toLocaleString() : 'N/A'}
                     </span>
                   </div>
                   
@@ -486,7 +490,7 @@ export default function InvestorDeepDive() {
                   <AssetMap ticker={selectedFiling.ticker} />
                 </div>
 
-                {/* RESTORED: Common Market Access (Broker Routing) */}
+                {/* Common Market Access (Broker Routing) */}
                 <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800">
                   <div className="flex justify-between items-center mb-2.5">
                     <span className="text-gray-400 font-semibold text-xs">Common Market Access:</span>
