@@ -76,7 +76,7 @@ export default function InvestorDeepDive() {
             .eq('investor_id', investorData.id)
             .order('shares_held', { ascending: false });
 
-          // 3. Fetch History for Delta Math (including put_call & security_type)
+          // 3. Fetch History for Delta Math
           const historyPromise = supabase
             .from('holdings_history')
             .select('ticker, put_call, security_type, shares_held, period_of_report')
@@ -264,7 +264,6 @@ export default function InvestorDeepDive() {
                           diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-purple-500/10 text-purple-400 border border-purple-500/20">NEW POSITION</span>;
                         }
                       } else {
-                        // Less than 2 periods in DB, default to INITIAL RECORD
                         diffBadge = <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-800 text-gray-400 border border-gray-700">INITIAL RECORD</span>;
                       }
 
@@ -479,12 +478,76 @@ export default function InvestorDeepDive() {
                   </div>
                 </div>
 
-                {/* Honest Headquarters Location Display */}
+                {/* Corporate Headquarters Location Display */}
                 <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800">
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-gray-400 font-semibold text-xs">Primary Corporate Headquarters Location</span>
                   </div>
                   <AssetMap ticker={selectedFiling.ticker} />
+                </div>
+
+                {/* RESTORED: Common Market Access (Broker Routing) */}
+                <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800">
+                  <div className="flex justify-between items-center mb-2.5">
+                    <span className="text-gray-400 font-semibold text-xs">Common Market Access:</span>
+                    <span className="text-[10px] uppercase font-mono bg-blue-900/40 text-blue-400 border border-blue-800/40 px-2 py-0.5 rounded">
+                      {!selectedFiling.ticker.includes('.') ? 'US Equities DMA' : 'Regional / Cross-Border'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    
+                    {/* US-Listed Equities */}
+                    {!selectedFiling.ticker.includes('.') && (
+                      <>
+                        <a href="https://www.interactivebrokers.com" target="_blank" rel="noopener noreferrer" className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-blue-500/50 p-2.5 rounded-lg flex flex-col group transition-all">
+                          <div className="flex justify-between items-center">
+                            <span className="text-white font-bold text-xs group-hover:text-blue-400">Interactive Brokers</span>
+                            <span className="text-[9px] text-gray-500 font-mono">GLOBAL</span>
+                          </div>
+                          <span className="text-gray-400 text-[10px] mt-0.5">US Equities Access</span>
+                        </a>
+                        <a href="https://www.xtb.com" target="_blank" rel="noopener noreferrer" className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-emerald-500/50 p-2.5 rounded-lg flex flex-col group transition-all">
+                          <div className="flex justify-between items-center">
+                            <span className="text-white font-bold text-xs group-hover:text-emerald-400">XTB Global</span>
+                            <span className="text-[9px] text-gray-500 font-mono">GLOBAL</span>
+                          </div>
+                          <span className="text-gray-400 text-[10px] mt-0.5">Low-Commission Execution</span>
+                        </a>
+                      </>
+                    )}
+
+                    {/* African Equities */}
+                    {(selectedFiling.ticker.endsWith('.LG') || selectedFiling.ticker.endsWith('.JO')) && (
+                      <>
+                        <a href="https://www.stanbicibtcstockbrokers.com" target="_blank" rel="noopener noreferrer" className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-purple-500/50 p-2.5 rounded-lg flex flex-col group transition-all">
+                          <div className="flex justify-between items-center">
+                            <span className="text-white font-bold text-xs group-hover:text-purple-400">Stanbic IBTC</span>
+                            <span className="text-[9px] text-gray-500 font-mono">REGIONAL</span>
+                          </div>
+                          <span className="text-gray-400 text-[10px] mt-0.5">African Exchange Access</span>
+                        </a>
+                        <a href="https://www.cardinalstone.com" target="_blank" rel="noopener noreferrer" className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-amber-500/50 p-2.5 rounded-lg flex flex-col group transition-all">
+                          <div className="flex justify-between items-center">
+                            <span className="text-white font-bold text-xs group-hover:text-amber-400">CardinalStone</span>
+                            <span className="text-[9px] text-gray-500 font-mono">REGIONAL</span>
+                          </div>
+                          <span className="text-gray-400 text-[10px] mt-0.5">Institutional Brokerage</span>
+                        </a>
+                      </>
+                    )}
+
+                    {/* Other International Equities */}
+                    {(selectedFiling.ticker.includes('.') && !selectedFiling.ticker.endsWith('.LG') && !selectedFiling.ticker.endsWith('.JO')) && (
+                      <a href="https://www.interactivebrokers.com" target="_blank" rel="noopener noreferrer" className="bg-gray-900 hover:bg-gray-800/80 border border-gray-800 hover:border-blue-500/50 p-2.5 rounded-lg flex flex-col group transition-all col-span-2">
+                        <div className="flex justify-between items-center">
+                          <span className="text-white font-bold text-xs group-hover:text-blue-400">Interactive Brokers (International)</span>
+                          <span className="text-[9px] text-gray-500 font-mono">GLOBAL</span>
+                        </div>
+                        <span className="text-gray-400 text-[10px] mt-0.5">Cross-Border Market Access</span>
+                      </a>
+                    )}
+
+                  </div>
                 </div>
 
               </div>
