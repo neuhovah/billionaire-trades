@@ -42,6 +42,12 @@ interface ActivistStake {
   filing_accession: string;
 }
 
+// Strict validation: Ensures CIK exists and contains at least 5 numeric digits 
+// (Filters out 'null', 'None', 'N/A', or blank spaces)
+const hasValidCik = (cik?: string | null) => {
+  return Boolean(cik && /\d{5,}/.test(String(cik).trim()));
+};
+
 export default function GlobalHub() {
   const [investors, setInvestors] = useState<Investor[]>([]);
   const [insiderTrades, setInsiderTrades] = useState<InsiderTransaction[]>([]);
@@ -86,8 +92,8 @@ export default function GlobalHub() {
       investor.market.toLowerCase().includes(searchLower) ||
       investor.region.toLowerCase().includes(searchLower);
 
-    // SEC Verification is now based purely on regulatory filing status (CIK), not geography
-    const isSecVerified = !!investor.cik;
+    // SEC Verification strictly requires a valid numeric CIK
+    const isSecVerified = hasValidCik(investor.cik);
     const matchesMarket =
       marketFilter === 'ALL' ||
       (marketFilter === 'SEC_VERIFIED' && isSecVerified) ||
@@ -104,8 +110,8 @@ export default function GlobalHub() {
     return acc;
   }, {});
 
-  // Dynamic count of all managers with an SEC CIK globally
-  const secVerifiedCount = investors.filter((i) => !!i.cik).length;
+  // Dynamic count of genuinely verified managers
+  const secVerifiedCount = investors.filter((i) => hasValidCik(i.cik)).length;
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-6 md:p-10 font-sans">
@@ -374,7 +380,7 @@ export default function GlobalHub() {
                   {/* Manager Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-gray-800">
                     {regionInvestors.map((investor) => {
-                      const isSec = !!investor.cik;
+                      const isSec = hasValidCik(investor.cik);
                       const isPrivate = !isSec && (investor.market?.toLowerCase().includes('private') || investor.status === 'private');
 
                       return (
@@ -409,8 +415,8 @@ export default function GlobalHub() {
                           <div className="flex justify-between items-center pt-4 border-t border-gray-800/60 font-mono text-xs">
                             {/* Dynamic Card Status Line */}
                             {isPrivate ? (
-                              <span className="text-[10px] font-mono text-gray-400 flex items-center gap-1.5">
-                                <span className="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
+                              <span className="text-[10px] font-mono text-gray-500 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-gray-600"></span>
                                 PRIVATE — NO DISCLOSURE
                               </span>
                             ) : isSec ? (
