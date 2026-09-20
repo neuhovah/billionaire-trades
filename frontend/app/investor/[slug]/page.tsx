@@ -46,6 +46,11 @@ const isManagerPrivate = (inv: any) => {
   );
 };
 
+const isForeignNoNexus = (inv: any) => {
+  const marketStr = (inv?.market || '').toLowerCase();
+  return marketStr.includes('foreign') || marketStr.includes('regional');
+};
+
 export default function InvestorDeepDive() {
   const params = useParams();
   const slug = params?.slug as string;
@@ -137,7 +142,7 @@ export default function InvestorDeepDive() {
   // LIVE RESOLUTION: Validation is strictly dependent on returning array lengths, removing header contradiction
   const isSec = filings.length > 0 || insiderTrades.length > 0 || activistStakes.length > 0;
   const isPrivate = isManagerPrivate(investor);
-  const isForeign = !isPrivate && !isSec && investor.market !== 'US Equities';
+  const isForeign = !isPrivate && !isSec && isForeignNoNexus(investor);
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-8 font-sans">
@@ -232,7 +237,7 @@ export default function InvestorDeepDive() {
                       <td colSpan={6} className="px-6 py-12 text-center text-gray-500 font-mono text-sm">
                         {isPrivate ? 'PRIVATE — NO PUBLIC DISCLOSURE' : 
                          isForeign ? 'FOREIGN LISTED — NO SEC 13F REQUIREMENT' :
-                         'Awaiting Verified Regulatory Data for this Portfolio.'}
+                         'Awaiting Verified Regulatory Data (13F/4) for this Portfolio.'}
                       </td>
                     </tr>
                   ) : (

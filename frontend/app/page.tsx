@@ -50,6 +50,13 @@ const isManagerPrivate = (inv: Partial<Investor>) => {
   );
 };
 
+const isForeignNoNexus = (inv: Partial<Investor>) => {
+  // Only explicitly designated foreign/regional markets get the "No Nexus" tag.
+  // This protects Global Equities, UK Equities, or US ADRs from being swept up.
+  const marketStr = (inv.market || '').toLowerCase();
+  return marketStr.includes('foreign') || marketStr.includes('regional');
+};
+
 export default function GlobalHub() {
   const [investors, setInvestors] = useState<Investor[]>([]);
   const [insiderTrades, setInsiderTrades] = useState<InsiderTransaction[]>([]);
@@ -379,7 +386,7 @@ export default function GlobalHub() {
                     {regionInvestors.map((investor) => {
                       const isSec = activeSecIds.has(investor.id);
                       const isPrivate = isManagerPrivate(investor);
-                      const isForeign = !isPrivate && !isSec && investor.market !== 'US Equities';
+                      const isForeign = !isPrivate && !isSec && isForeignNoNexus(investor);
 
                       return (
                         <Link
@@ -431,7 +438,7 @@ export default function GlobalHub() {
                             ) : (
                               <span className="text-[10px] font-mono text-amber-500/70 flex items-center gap-1.5">
                                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500/50"></span>
-                                AWAITING REGULATORY DATA
+                                AWAITING SEC DISCLOSURE
                               </span>
                             )}
                             <span className="text-blue-400 group-hover:translate-x-1 transition-transform font-bold text-sm">
