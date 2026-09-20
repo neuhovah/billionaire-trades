@@ -46,19 +46,6 @@ const isManagerPrivate = (inv: any) => {
   );
 };
 
-const isSecVerified = (inv: any) => {
-  if (!inv?.cik) return false;
-  const clean = String(inv.cik).trim().toLowerCase();
-  
-  if (!/\d{5,}/.test(clean)) return false;
-  if (/^(\d)\1+$/.test(clean)) return false;
-  
-  const dummySeeds = ['0000000000', '12345', '123456', '123456789', '987654321', '0', 'null', 'nan', 'none', 'n/a'];
-  if (dummySeeds.includes(clean)) return false;
-
-  return !isManagerPrivate(inv);
-};
-
 export default function InvestorDeepDive() {
   const params = useParams();
   const slug = params?.slug as string;
@@ -147,9 +134,10 @@ export default function InvestorDeepDive() {
 
   const isDeregistered = investor.slug === 'scion-asset-management' || investor.status === 'deregistered';
   
-  // Unified Property resolution
+  // LIVE RESOLUTION: Validation is strictly dependent on returning array lengths, removing header contradiction
+  const isSec = filings.length > 0 || insiderTrades.length > 0 || activistStakes.length > 0;
   const isPrivate = isManagerPrivate(investor);
-  const isSec = isSecVerified(investor);
+  const isForeign = !isPrivate && !isSec && investor.market !== 'US Equities';
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-8 font-sans">
@@ -176,7 +164,7 @@ export default function InvestorDeepDive() {
           <div className="flex flex-wrap gap-4 mt-3 items-center">
             <p className="text-gray-400 text-lg">{investor.investment_style}</p>
             <span className="text-xs font-mono text-blue-400 bg-blue-950/30 border border-blue-900/50 px-2.5 py-1 rounded">
-              {investor.region} | {isPrivate ? 'PRIVATE' : investor.market}
+              {investor.region} | {isPrivate ? 'PRIVATE' : isForeign ? 'FOREIGN / REGIONAL' : investor.market}
             </span>
             {isSec && (
               <span className="text-xs font-mono text-emerald-400 bg-emerald-950/30 border border-emerald-900/50 px-2.5 py-1 rounded flex items-center gap-1.5">
@@ -242,7 +230,9 @@ export default function InvestorDeepDive() {
                   {filings.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-6 py-12 text-center text-gray-500 font-mono text-sm">
-                        {isPrivate ? 'PRIVATE — NO PUBLIC DISCLOSURE' : 'Awaiting Verified Regulatory Data for this Portfolio.'}
+                        {isPrivate ? 'PRIVATE — NO PUBLIC DISCLOSURE' : 
+                         isForeign ? 'FOREIGN LISTED — NO SEC 13F REQUIREMENT' :
+                         'Awaiting Verified Regulatory Data for this Portfolio.'}
                       </td>
                     </tr>
                   ) : (

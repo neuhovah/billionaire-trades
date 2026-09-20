@@ -17,7 +17,6 @@ interface Investor {
   market: string;
   investment_style: string;
   slug: string;
-  cik?: string;
   status?: string; 
 }
 
@@ -51,29 +50,12 @@ const isManagerPrivate = (inv: Partial<Investor>) => {
   );
 };
 
-const isSecVerified = (inv: Partial<Investor>) => {
-  if (!inv.cik) return false;
-  const clean = String(inv.cik).trim().toLowerCase();
-  
-  // 1. Must be numeric and at least 5 digits
-  if (!/\d{5,}/.test(clean)) return false;
-  
-  // 2. Reject ORM generated repeating digit dummies (e.g., '11111', '9999999999')
-  if (/^(\d)\1+$/.test(clean)) return false;
-  
-  // 3. Reject common sequential database dummy seeds
-  const dummySeeds = ['0000000000', '12345', '123456', '123456789', '987654321', '0', 'null', 'nan', 'none', 'n/a'];
-  if (dummySeeds.includes(clean)) return false;
-
-  // 4. If they pass numeric validation, they still cannot be explicitly private
-  return !isManagerPrivate(inv);
-};
-
 export default function GlobalHub() {
   const [investors, setInvestors] = useState<Investor[]>([]);
   const [insiderTrades, setInsiderTrades] = useState<InsiderTransaction[]>([]);
   const [activistStakes, setActivistStakes] = useState<ActivistStake[]>([]);
-  
+  const [activeSecIds, setActiveSecIds] = useState<Set<string>>(new Set());
+
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [marketFilter, setMarketFilter] = useState<'ALL' | 'SEC_VERIFIED' | 'REGIONAL'>('ALL');
@@ -82,16 +64,30 @@ export default function GlobalHub() {
   useEffect(() => {
     async function fetchDashboardData() {
       try {
-        const [investorsRes, insidersRes, activistsRes] = await Promise.all([
+        const [
+          investorsRes, insidersRes, activistsRes,
+          fIdsRes, iIdsRes, aIdsRes
+        ] = await Promise.all([
           supabase.from('investors').select('*').order('name'),
           supabase.from('insider_transactions').select('*').order('transaction_date', { ascending: false }).limit(15),
-          supabase.from('activist_stakes').select('*').order('filing_date', { ascending: false }).limit(15)
+          supabase.from('activist_stakes').select('*').order('filing_date', { ascending: false }).limit(15),
+          supabase.from('filings').select('investor_id'),
+          supabase.from('insider_transactions').select('investor_id'),
+          supabase.from('activist_stakes').select('investor_id')
         ]);
 
         if (investorsRes.error) throw investorsRes.error;
         if (investorsRes.data) setInvestors(investorsRes.data as Investor[]);
         if (insidersRes.data) setInsiderTrades(insidersRes.data as InsiderTransaction[]);
-        if (activistsRes.data) setActivistStakes(activistStakesRes => activistsRes.data as ActivistStake[]);
+        if (activistsRes.data) setActivistStakes(activistsRes.data as ActivistStake[]);
+
+        // Build a strict live lookup Set based entirely on proven data records
+        const verifiedIds = new Set([
+          ...(fIdsRes.data || []).map(f => f.investor_id),
+          ...(iIdsRes.data || []).map(i => i.investor_id),
+          ...(aIdsRes.data || []).map(a => a.investor_id)
+        ]);
+        setActiveSecIds(verifiedIds);
 
       } catch (err) {
         console.error("Error loading institutional dashboard data:", err);
@@ -111,11 +107,11 @@ export default function GlobalHub() {
       investor.market.toLowerCase().includes(searchLower) ||
       investor.region.toLowerCase().includes(searchLower);
 
-    const isSec = isSecVerified(investor);
+    const isSecVerified = activeSecIds.has(investor.id);
     const matchesMarket =
       marketFilter === 'ALL' ||
-      (marketFilter === 'SEC_VERIFIED' && isSec) ||
-      (marketFilter === 'REGIONAL' && !isSec);
+      (marketFilter === 'SEC_VERIFIED' && isSecVerified) ||
+      (marketFilter === 'REGIONAL' && !isSecVerified);
 
     return matchesSearch && matchesMarket;
   });
@@ -127,12 +123,12 @@ export default function GlobalHub() {
     return acc;
   }, {});
 
-  const secVerifiedCount = investors.filter((i) => isSecVerified(i)).length;
+  const secVerifiedCount = investors.filter((i) => activeSecIds.has(i.id)).length;
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-6 md:p-10 font-sans">
       <div className="max-w-7xl mx-auto space-y-8">
-        
+
         <div className="border-b border-gray-800 pb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
           <div>
             <div className="flex items-center gap-3 mb-2">
@@ -381,8 +377,9 @@ export default function GlobalHub() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-gray-800">
                     {regionInvestors.map((investor) => {
-                      const isSec = isSecVerified(investor);
+                      const isSec = activeSecIds.has(investor.id);
                       const isPrivate = isManagerPrivate(investor);
+                      const isForeign = !isPrivate && !isSec && investor.market !== 'US Equities';
 
                       return (
                         <Link
@@ -401,10 +398,12 @@ export default function GlobalHub() {
                                     ? 'bg-gray-950 text-gray-500 border-gray-800' 
                                     : isSec
                                     ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800'
+                                    : isForeign
+                                    ? 'bg-blue-950/40 text-blue-400 border-blue-900/50'
                                     : 'bg-gray-950 text-gray-500 border-gray-800'
                                 }`}
                               >
-                                {isPrivate ? 'PRIVATE' : isSec ? 'SEC 13F / Form 4' : investor.market}
+                                {isPrivate ? 'PRIVATE' : isSec ? 'SEC 13F / Form 4' : isForeign ? 'FOREIGN LISTED — NO US NEXUS' : investor.market}
                               </span>
                             </div>
 
@@ -423,6 +422,11 @@ export default function GlobalHub() {
                               <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1.5">
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                                 VERIFIED SOURCE
+                              </span>
+                            ) : isForeign ? (
+                              <span className="text-[10px] font-mono text-blue-400 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-500/50"></span>
+                                FOREIGN LISTED — NO US NEXUS
                               </span>
                             ) : (
                               <span className="text-[10px] font-mono text-amber-500/70 flex items-center gap-1.5">
