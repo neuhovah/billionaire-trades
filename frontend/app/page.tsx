@@ -4,12 +4,10 @@ import { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import Link from 'next/link';
 
-// Supabase Setup
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Types
 interface Investor {
   id: string;
   name: string;
@@ -17,7 +15,8 @@ interface Investor {
   market: string;
   investment_style: string;
   slug: string;
-  status?: string; 
+  status?: string;
+  disclosure_regime?: '13F_FILER' | 'FORM4_INSIDER' | 'FOREIGN_NO_NEXUS' | 'PRIVATE';
 }
 
 interface InsiderTransaction {
@@ -41,20 +40,13 @@ interface ActivistStake {
   filing_accession: string;
 }
 
-// Strict Regulatory Logic Modules
 const isManagerPrivate = (inv: Partial<Investor>) => {
+  if (inv.disclosure_regime) return inv.disclosure_regime === 'PRIVATE';
   return Boolean(
     inv.market?.toLowerCase().includes('private') ||
     inv.status === 'private' ||
     inv.investment_style?.toLowerCase().includes('private')
   );
-};
-
-const isForeignNoNexus = (inv: Partial<Investor>) => {
-  // Only explicitly designated foreign/regional markets get the "No Nexus" tag.
-  // This protects Global Equities, UK Equities, or US ADRs from being swept up.
-  const marketStr = (inv.market || '').toLowerCase();
-  return marketStr.includes('foreign') || marketStr.includes('regional');
 };
 
 export default function GlobalHub() {
@@ -65,7 +57,7 @@ export default function GlobalHub() {
 
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [marketFilter, setMarketFilter] = useState<'ALL' | 'SEC_VERIFIED' | 'REGIONAL'>('ALL');
+  const [marketFilter, setMarketFilter] = useState<'ALL' | 'SEC_VERIFIED'>('ALL');
   const [activeTab, setActiveTab] = useState<'MANAGERS' | 'SIGNALS'>('MANAGERS');
 
   useEffect(() => {
@@ -88,7 +80,6 @@ export default function GlobalHub() {
         if (insidersRes.data) setInsiderTrades(insidersRes.data as InsiderTransaction[]);
         if (activistsRes.data) setActivistStakes(activistsRes.data as ActivistStake[]);
 
-        // Build a strict live lookup Set based entirely on proven data records
         const verifiedIds = new Set([
           ...(fIdsRes.data || []).map(f => f.investor_id),
           ...(iIdsRes.data || []).map(i => i.investor_id),
@@ -112,13 +103,11 @@ export default function GlobalHub() {
       investor.name.toLowerCase().includes(searchLower) ||
       investor.investment_style.toLowerCase().includes(searchLower) ||
       investor.market.toLowerCase().includes(searchLower) ||
-      investor.region.toLowerCase().includes(searchLower);
+      (investor.region || 'Global').toLowerCase().includes(searchLower);
 
     const isSecVerified = activeSecIds.has(investor.id);
     const matchesMarket =
-      marketFilter === 'ALL' ||
-      (marketFilter === 'SEC_VERIFIED' && isSecVerified) ||
-      (marketFilter === 'REGIONAL' && !isSecVerified);
+      marketFilter === 'ALL' || (marketFilter === 'SEC_VERIFIED' && isSecVerified);
 
     return matchesSearch && matchesMarket;
   });
@@ -369,10 +358,9 @@ export default function GlobalHub() {
           </div>
         ) : (
           <div className="space-y-10">
-            {['North America', 'Europe', 'Asia-Pacific', 'Africa', 'Middle East & Emerging'].map((region) => {
+            {Object.keys(groupedInvestors).sort().map((region) => {
               const regionInvestors = groupedInvestors[region];
-              if (!regionInvestors || regionInvestors.length === 0) return null;
-
+              
               return (
                 <div key={region} className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden shadow-xl">
                   <div className="px-6 py-4 bg-linear-to-r from-gray-900 via-gray-900 to-gray-800/80 border-b border-gray-800 flex justify-between items-center">
@@ -384,9 +372,10 @@ export default function GlobalHub() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-gray-800">
                     {regionInvestors.map((investor) => {
+                      const regime = investor.disclosure_regime;
                       const isSec = activeSecIds.has(investor.id);
-                      const isPrivate = isManagerPrivate(investor);
-                      const isForeign = !isPrivate && !isSec && isForeignNoNexus(investor);
+                      const isPrivate = regime ? regime === 'PRIVATE' : isManagerPrivate(investor);
+                      const isForeign = regime === 'FOREIGN_NO_NEXUS';
 
                       return (
                         <Link

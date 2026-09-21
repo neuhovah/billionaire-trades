@@ -37,18 +37,13 @@ interface ActivistStake {
   filing_accession: string;
 }
 
-// Strict Regulatory Logic Modules
 const isManagerPrivate = (inv: any) => {
+  if (inv?.disclosure_regime) return inv.disclosure_regime === 'PRIVATE';
   return Boolean(
     inv?.market?.toLowerCase().includes('private') ||
     inv?.status === 'private' ||
     inv?.investment_style?.toLowerCase().includes('private')
   );
-};
-
-const isForeignNoNexus = (inv: any) => {
-  const marketStr = (inv?.market || '').toLowerCase();
-  return marketStr.includes('foreign') || marketStr.includes('regional');
 };
 
 export default function InvestorDeepDive() {
@@ -59,7 +54,6 @@ export default function InvestorDeepDive() {
   const [filings, setFilings] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   
-  // Real-time signal states
   const [insiderTrades, setInsiderTrades] = useState<InsiderTransaction[]>([]);
   const [activistStakes, setActivistStakes] = useState<ActivistStake[]>([]);
   
@@ -82,10 +76,6 @@ export default function InvestorDeepDive() {
         setInvestor(investorData);
 
         if (investorData) {
-          const searchName = investorData.name.split(' ')[0];
-          const parentCompanyMatch = investorData.name.match(/\(([^)]+)\)/);
-          const parentCompanySearch = parentCompanyMatch ? parentCompanyMatch[1].split(' ')[0] : searchName;
-
           const filingsPromise = supabase
             .from('filings')
             .select('*, metrics(volatility_90d, vol_is_estimated)')
@@ -101,13 +91,13 @@ export default function InvestorDeepDive() {
           const insiderPromise = supabase
             .from('insider_transactions')
             .select('*')
-            .or(`investor_id.eq.${investorData.id},reporting_owner.ilike.%${searchName}%,reporting_owner.ilike.%${parentCompanySearch}%`)
+            .eq('investor_id', investorData.id)
             .order('transaction_date', { ascending: false });
 
           const activistPromise = supabase
             .from('activist_stakes')
             .select('*')
-            .or(`investor_id.eq.${investorData.id},reporting_owner.ilike.%${searchName}%,reporting_owner.ilike.%${parentCompanySearch}%`)
+            .eq('investor_id', investorData.id)
             .order('filing_date', { ascending: false });
 
           const [filingsRes, historyRes, insiderRes, activistRes] = await Promise.all([
@@ -137,12 +127,11 @@ export default function InvestorDeepDive() {
     return <div className="min-h-screen bg-gray-950 flex items-center justify-center font-mono text-red-400">Investor profile not found.</div>;
   }
 
-  const isDeregistered = investor.slug === 'scion-asset-management' || investor.status === 'deregistered';
-  
-  // LIVE RESOLUTION: Validation is strictly dependent on returning array lengths, removing header contradiction
+  const isDeregistered = investor.status === 'deregistered';
+  const regime = investor.disclosure_regime;
   const isSec = filings.length > 0 || insiderTrades.length > 0 || activistStakes.length > 0;
-  const isPrivate = isManagerPrivate(investor);
-  const isForeign = !isPrivate && !isSec && isForeignNoNexus(investor);
+  const isPrivate = regime ? regime === 'PRIVATE' : isManagerPrivate(investor);
+  const isForeign = regime === 'FOREIGN_NO_NEXUS';
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-8 font-sans">
@@ -235,9 +224,10 @@ export default function InvestorDeepDive() {
                   {filings.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-6 py-12 text-center text-gray-500 font-mono text-sm">
-                        {isPrivate ? 'PRIVATE — NO PUBLIC DISCLOSURE' : 
-                         isForeign ? 'FOREIGN LISTED — NO SEC 13F REQUIREMENT' :
-                         'Awaiting Verified Regulatory Data (13F/4) for this Portfolio.'}
+                        {regime === 'PRIVATE' ? 'PRIVATE — NO PUBLIC DISCLOSURE' : 
+                         regime === 'FOREIGN_NO_NEXUS' ? 'FOREIGN LISTED — NO SEC 13F REQUIREMENT' :
+                         regime === 'FORM4_INSIDER' ? 'Awaiting Form 4 / 13D Insider filings.' :
+                         'Awaiting Verified Regulatory Data (13F) for this Portfolio.'}
                       </td>
                     </tr>
                   ) : (
@@ -468,7 +458,9 @@ export default function InvestorDeepDive() {
                   <div className="bg-gray-950 p-3.5 rounded-lg border border-gray-800 flex flex-col justify-between relative group">
                     <span className="text-gray-400 text-xs flex justify-between items-center">
                       90-Day Volatility (σ):
-                      <span className="text-[9px] text-gray-600 font-mono">SOURCE: YF</span>
+                      <span className={`text-[9px] font-mono ${selectedFiling.metrics?.[0]?.vol_is_estimated ? 'text-amber-500' : 'text-gray-600'}`}>
+                        {selectedFiling.metrics?.[0]?.vol_is_estimated ? 'SOURCE: ESTIMATED' : 'SOURCE: YF'}
+                      </span>
                     </span>
                     <span className="font-mono text-blue-400 font-bold text-base mt-1 flex items-center">
                       {selectedFiling.metrics?.[0]?.volatility_90d ? `${selectedFiling.metrics[0].volatility_90d}%` : 'N/A'}
