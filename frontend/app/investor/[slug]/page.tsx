@@ -15,7 +15,6 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Types
 interface InsiderTransaction {
   id: string;
   reporting_owner: string;
@@ -38,7 +37,6 @@ interface ActivistStake {
 }
 
 const isManagerPrivate = (inv: any) => {
-  if (inv?.disclosure_regime) return inv.disclosure_regime === 'PRIVATE';
   return Boolean(
     inv?.market?.toLowerCase().includes('private') ||
     inv?.status === 'private' ||
@@ -130,8 +128,11 @@ export default function InvestorDeepDive() {
   const isDeregistered = investor.status === 'deregistered';
   const regime = investor.disclosure_regime;
   const isSec = filings.length > 0 || insiderTrades.length > 0 || activistStakes.length > 0;
-  const isPrivate = regime ? regime === 'PRIVATE' : isManagerPrivate(investor);
-  const isForeign = regime === 'FOREIGN_NO_NEXUS';
+  
+  // P0 Fix: A label cannot override real Sec Verified data
+  const isPrivate = !isSec && (regime === 'PRIVATE' || (!regime && isManagerPrivate(investor)));
+  const isForeign = !isSec && regime === 'FOREIGN_NO_NEXUS';
+  const isUnclassified = !isSec && regime === 'UNCLASSIFIED';
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-8 font-sans">
@@ -158,7 +159,7 @@ export default function InvestorDeepDive() {
           <div className="flex flex-wrap gap-4 mt-3 items-center">
             <p className="text-gray-400 text-lg">{investor.investment_style}</p>
             <span className="text-xs font-mono text-blue-400 bg-blue-950/30 border border-blue-900/50 px-2.5 py-1 rounded">
-              {investor.region} | {isPrivate ? 'PRIVATE' : isForeign ? 'FOREIGN / REGIONAL' : investor.market}
+              {investor.region} | {isPrivate ? 'PRIVATE' : isForeign ? 'FOREIGN / REGIONAL' : isUnclassified ? 'UNCLASSIFIED' : investor.market}
             </span>
             {isSec && (
               <span className="text-xs font-mono text-emerald-400 bg-emerald-950/30 border border-emerald-900/50 px-2.5 py-1 rounded flex items-center gap-1.5">
@@ -226,7 +227,9 @@ export default function InvestorDeepDive() {
                       <td colSpan={6} className="px-6 py-12 text-center text-gray-500 font-mono text-sm">
                         {regime === 'PRIVATE' ? 'PRIVATE — NO PUBLIC DISCLOSURE' : 
                          regime === 'FOREIGN_NO_NEXUS' ? 'FOREIGN LISTED — NO SEC 13F REQUIREMENT' :
-                         regime === 'FORM4_INSIDER' ? 'Awaiting Form 4 / 13D Insider filings.' :
+                         regime === 'FORM4_INSIDER' ? 'Awaiting Form 4 Insider filings.' :
+                         regime === '13D_G_CANDIDATE' ? 'Awaiting Schedule 13D/G stakes.' :
+                         regime === 'UNCLASSIFIED' ? 'Awaiting initial portfolio classification.' :
                          'Awaiting Verified Regulatory Data (13F) for this Portfolio.'}
                       </td>
                     </tr>

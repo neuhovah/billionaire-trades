@@ -16,7 +16,7 @@ interface Investor {
   investment_style: string;
   slug: string;
   status?: string;
-  disclosure_regime?: '13F_FILER' | 'FORM4_INSIDER' | 'FOREIGN_NO_NEXUS' | 'PRIVATE';
+  disclosure_regime?: '13F_FILER' | 'FORM4_INSIDER' | '13D_G_CANDIDATE' | 'FOREIGN_NO_NEXUS' | 'PRIVATE' | 'UNCLASSIFIED';
 }
 
 interface InsiderTransaction {
@@ -41,7 +41,6 @@ interface ActivistStake {
 }
 
 const isManagerPrivate = (inv: Partial<Investor>) => {
-  if (inv.disclosure_regime) return inv.disclosure_regime === 'PRIVATE';
   return Boolean(
     inv.market?.toLowerCase().includes('private') ||
     inv.status === 'private' ||
@@ -374,8 +373,10 @@ export default function GlobalHub() {
                     {regionInvestors.map((investor) => {
                       const regime = investor.disclosure_regime;
                       const isSec = activeSecIds.has(investor.id);
-                      const isPrivate = regime ? regime === 'PRIVATE' : isManagerPrivate(investor);
-                      const isForeign = regime === 'FOREIGN_NO_NEXUS';
+                      // P0 Fix: A label cannot override real Sec Verified data
+                      const isPrivate = !isSec && (regime === 'PRIVATE' || (!regime && isManagerPrivate(investor)));
+                      const isForeign = !isSec && regime === 'FOREIGN_NO_NEXUS';
+                      const isUnclassified = !isSec && regime === 'UNCLASSIFIED';
 
                       return (
                         <Link
@@ -396,10 +397,12 @@ export default function GlobalHub() {
                                     ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800'
                                     : isForeign
                                     ? 'bg-blue-950/40 text-blue-400 border-blue-900/50'
+                                    : isUnclassified
+                                    ? 'bg-amber-950/40 text-amber-500 border-amber-900/50'
                                     : 'bg-gray-950 text-gray-500 border-gray-800'
                                 }`}
                               >
-                                {isPrivate ? 'PRIVATE' : isSec ? 'SEC 13F / Form 4' : isForeign ? 'FOREIGN LISTED — NO US NEXUS' : investor.market}
+                                {isPrivate ? 'PRIVATE' : isSec ? 'SEC 13F / Form 4' : isForeign ? 'FOREIGN LISTED — NO US NEXUS' : isUnclassified ? 'UNCLASSIFIED' : investor.market}
                               </span>
                             </div>
 
@@ -423,6 +426,11 @@ export default function GlobalHub() {
                               <span className="text-[10px] font-mono text-blue-400 flex items-center gap-1.5">
                                 <span className="w-1.5 h-1.5 rounded-full bg-blue-500/50"></span>
                                 FOREIGN LISTED — NO US NEXUS
+                              </span>
+                            ) : isUnclassified ? (
+                              <span className="text-[10px] font-mono text-amber-500 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500/50"></span>
+                                AWAITING CLASSIFICATION
                               </span>
                             ) : (
                               <span className="text-[10px] font-mono text-amber-500/70 flex items-center gap-1.5">
