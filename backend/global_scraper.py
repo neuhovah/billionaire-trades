@@ -181,13 +181,14 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
         prior_tickers = {}
         for row in prior_period_query.data:
             key = (row['ticker'], row.get('put_call') or '', row.get('security_type') or 'SH')
-            # Store the shares if this is the most recent prior record
-            if key not in prior_tickers and row['shares_held'] > 0:
+            # Fix P1: Store the most recent prior record regardless of its value to prevent looping exit alerts
+            if key not in prior_tickers:
                 prior_tickers[key] = row['shares_held']
 
         # Check for assets held previously that are missing from current merged_portfolio
         for (p_ticker, p_put_call, p_sec_type), p_shares in prior_tickers.items():
-            if (p_ticker, p_put_call, p_sec_type) not in merged_portfolio:
+            # Fix P1: Only count it as an exit if they actually held > 0 shares in the immediate prior period
+            if p_shares > 0 and (p_ticker, p_put_call, p_sec_type) not in merged_portfolio:
                 print(f"  🔴 EXITED POSITION DETECTED: {p_ticker} (Was {p_shares:,} shares -> Now 0)")
                 
                 # Record zero-share exit in history
@@ -267,15 +268,22 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
 def run_pipeline():
     print("=== STARTING STRICT SEC EDGAR INGESTION PIPELINE ===")
     
-    investors = supabase.table("investors").select("*").eq("market", "US Equities").execute().data
+    # Fix P0: Target precise regulatory schema rather than loose market string
+    investors = supabase.table("investors").select("*").eq("disclosure_regime", "13F_FILER").execute().data
 
     if not investors:
-        print("❌ No SEC-regulated investors found in database.")
+        print("❌ No SEC-regulated 13F Filers found in database.")
         return
 
     for investor in investors:
         print(f"\n--------------------------------------------------")
-        print(f"📡 Processing {investor['name']} | Market: {investor['market']}")
+        print(f"📡 Processing {investor['name']} | Regime: {investor['disclosure_regime']}")
+        
+        # Fix P0: Guard against missing CIKs causing silent crashes
+        if not investor.get('cik'):
+            print(f"  ⚠️ {investor['name']} is 13F_FILER but has no CIK on file. Skipping.")
+            continue
+            
         try:
             company = Company(str(investor['cik']).zfill(10))
             
