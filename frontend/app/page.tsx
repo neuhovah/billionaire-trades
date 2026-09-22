@@ -373,10 +373,12 @@ export default function GlobalHub() {
                     {regionInvestors.map((investor) => {
                       const regime = investor.disclosure_regime;
                       const isSec = activeSecIds.has(investor.id);
-                      // P0 Fix: A label cannot override real Sec Verified data
+                      
                       const isPrivate = !isSec && (regime === 'PRIVATE' || (!regime && isManagerPrivate(investor)));
                       const isForeign = !isSec && regime === 'FOREIGN_NO_NEXUS';
                       const isUnclassified = !isSec && regime === 'UNCLASSIFIED';
+                      const isPendingInsider = !isSec && (regime === 'FORM4_INSIDER' || regime === '13D_G_CANDIDATE');
+                      const isPending13F = !isSec && regime === '13F_FILER';
 
                       return (
                         <Link
@@ -397,12 +399,20 @@ export default function GlobalHub() {
                                     ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800'
                                     : isForeign
                                     ? 'bg-blue-950/40 text-blue-400 border-blue-900/50'
-                                    : isUnclassified
+                                    : isPendingInsider
+                                    ? 'bg-purple-950/40 text-purple-400 border-purple-900/50'
+                                    : isPending13F || isUnclassified
                                     ? 'bg-amber-950/40 text-amber-500 border-amber-900/50'
                                     : 'bg-gray-950 text-gray-500 border-gray-800'
                                 }`}
                               >
-                                {isPrivate ? 'PRIVATE' : isSec ? 'SEC 13F / Form 4' : isForeign ? 'FOREIGN LISTED — NO US NEXUS' : isUnclassified ? 'UNCLASSIFIED' : investor.market}
+                                {isPrivate ? 'PRIVATE' : 
+                                 isSec ? 'SEC 13F / Form 4' : 
+                                 isForeign ? 'FOREIGN LISTED — NO US NEXUS' : 
+                                 isPendingInsider ? 'FORM 4 / 13D-G CANDIDATE' : 
+                                 isPending13F ? 'AWAITING 13F FILING' : 
+                                 isUnclassified ? 'UNCLASSIFIED' : 
+                                 investor.market}
                               </span>
                             </div>
 
@@ -427,15 +437,25 @@ export default function GlobalHub() {
                                 <span className="w-1.5 h-1.5 rounded-full bg-blue-500/50"></span>
                                 FOREIGN LISTED — NO US NEXUS
                               </span>
+                            ) : isPendingInsider ? (
+                              <span className="text-[10px] font-mono text-purple-400 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-purple-500/50"></span>
+                                PENDING SCHEDULE 13D/G
+                              </span>
+                            ) : isPending13F ? (
+                              <span className="text-[10px] font-mono text-amber-500 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500/50"></span>
+                                AWAITING 13F IMPORT
+                              </span>
                             ) : isUnclassified ? (
                               <span className="text-[10px] font-mono text-amber-500 flex items-center gap-1.5">
                                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500/50"></span>
                                 AWAITING CLASSIFICATION
                               </span>
                             ) : (
-                              <span className="text-[10px] font-mono text-amber-500/70 flex items-center gap-1.5">
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500/50"></span>
-                                AWAITING SEC DISCLOSURE
+                              <span className="text-[10px] font-mono text-gray-500 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-gray-600"></span>
+                                {investor.market}
                               </span>
                             )}
                             <span className="text-blue-400 group-hover:translate-x-1 transition-transform font-bold text-sm">

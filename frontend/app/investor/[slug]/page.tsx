@@ -129,10 +129,11 @@ export default function InvestorDeepDive() {
   const regime = investor.disclosure_regime;
   const isSec = filings.length > 0 || insiderTrades.length > 0 || activistStakes.length > 0;
   
-  // P0 Fix: A label cannot override real Sec Verified data
   const isPrivate = !isSec && (regime === 'PRIVATE' || (!regime && isManagerPrivate(investor)));
   const isForeign = !isSec && regime === 'FOREIGN_NO_NEXUS';
   const isUnclassified = !isSec && regime === 'UNCLASSIFIED';
+  const isPendingInsider = !isSec && (regime === 'FORM4_INSIDER' || regime === '13D_G_CANDIDATE');
+  const isPending13F = !isSec && regime === '13F_FILER';
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-8 font-sans">
@@ -158,8 +159,14 @@ export default function InvestorDeepDive() {
           <h1 className="text-4xl font-bold text-white tracking-tight">{investor.name}</h1>
           <div className="flex flex-wrap gap-4 mt-3 items-center">
             <p className="text-gray-400 text-lg">{investor.investment_style}</p>
-            <span className="text-xs font-mono text-blue-400 bg-blue-950/30 border border-blue-900/50 px-2.5 py-1 rounded">
-              {investor.region} | {isPrivate ? 'PRIVATE' : isForeign ? 'FOREIGN / REGIONAL' : isUnclassified ? 'UNCLASSIFIED' : investor.market}
+            <span className={`text-xs font-mono px-2.5 py-1 rounded border ${
+              isPrivate ? 'bg-gray-950/30 text-gray-500 border-gray-800' : 
+              isForeign ? 'bg-blue-950/30 text-blue-400 border-blue-900/50' : 
+              isPendingInsider ? 'bg-purple-950/30 text-purple-400 border-purple-900/50' :
+              isPending13F || isUnclassified ? 'bg-amber-950/30 text-amber-500 border-amber-900/50' : 
+              'bg-gray-950/30 text-gray-500 border-gray-800'
+            }`}>
+              {investor.region} | {isPrivate ? 'PRIVATE' : isForeign ? 'FOREIGN / REGIONAL' : isPendingInsider ? 'FORM 4 / 13D-G CANDIDATE' : isPending13F ? 'AWAITING 13F FILING' : isUnclassified ? 'UNCLASSIFIED' : investor.market}
             </span>
             {isSec && (
               <span className="text-xs font-mono text-emerald-400 bg-emerald-950/30 border border-emerald-900/50 px-2.5 py-1 rounded flex items-center gap-1.5">
