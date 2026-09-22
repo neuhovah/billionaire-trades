@@ -120,6 +120,23 @@ export default function GlobalHub() {
 
   const secVerifiedCount = investors.filter((i) => activeSecIds.has(i.id)).length;
 
+  // Custom Regional Sorting Logic
+  const regionPriority = [
+    "North America",
+    "Europe",
+    "Asia-Pacific",
+    "Middle East & Emerging",
+    "Latin America & Caribbean",
+    "Africa"
+  ];
+
+  const sortedRegions = Object.keys(groupedInvestors).sort((a, b) => {
+    const weightA = regionPriority.indexOf(a) === -1 ? 99 : regionPriority.indexOf(a);
+    const weightB = regionPriority.indexOf(b) === -1 ? 99 : regionPriority.indexOf(b);
+    if (weightA !== weightB) return weightA - weightB;
+    return a.localeCompare(b);
+  });
+
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-6 md:p-10 font-sans">
       <div className="max-w-7xl mx-auto space-y-8">
@@ -357,7 +374,7 @@ export default function GlobalHub() {
           </div>
         ) : (
           <div className="space-y-10">
-            {Object.keys(groupedInvestors).sort().map((region) => {
+            {sortedRegions.map((region) => {
               const regionInvestors = groupedInvestors[region];
               
               return (
