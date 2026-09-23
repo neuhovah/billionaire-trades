@@ -4,6 +4,7 @@ import requests
 import contextlib
 import io
 import numpy as np
+import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
 from edgar import set_identity, Company
@@ -169,7 +170,7 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
     # 2. STATE CLEANUP: Purge current snapshot view to mirror unified portfolio
     supabase.table("filings").delete().eq("investor_id", investor_id).execute()
 
-    # 3. DETECT FULL EXITS: Query positions held in the immediate prior quarter
+    # 3. BULK MEMORY CACHE OF PRIOR POSITIONS (Eliminates 1000s of API queries)
     prior_period_query = supabase.table("holdings_history")\
         .select("ticker, put_call, security_type, shares_held")\
         .eq("investor_id", investor_id)\
@@ -177,56 +178,43 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
         .order("period_of_report", desc=True)\
         .execute()
 
+    prior_tickers = {}
     if prior_period_query.data:
-        prior_tickers = {}
         for row in prior_period_query.data:
             key = (row['ticker'], row.get('put_call') or '', row.get('security_type') or 'SH')
-            # Fix P1: Store the most recent prior record regardless of its value to prevent looping exit alerts
             if key not in prior_tickers:
                 prior_tickers[key] = row['shares_held']
 
-        # Check for assets held previously that are missing from current merged_portfolio
-        for (p_ticker, p_put_call, p_sec_type), p_shares in prior_tickers.items():
-            # Fix P1: Only count it as an exit if they actually held > 0 shares in the immediate prior period
-            if p_shares > 0 and (p_ticker, p_put_call, p_sec_type) not in merged_portfolio:
-                print(f"  🔴 EXITED POSITION DETECTED: {p_ticker} (Was {p_shares:,} shares -> Now 0)")
-                
-                # Record zero-share exit in history
-                supabase.table("holdings_history").upsert({
-                    "investor_id": investor_id,
-                    "ticker": p_ticker,
-                    "put_call": p_put_call,
-                    "security_type": p_sec_type,
-                    "shares_held": 0,
-                    "period_of_report": report_date,
-                    "filing_accession": latest_accession,
-                    "data_source": "sec_edgar"
-                }, on_conflict="investor_id, ticker, period_of_report, filing_accession, put_call, security_type").execute()
+    history_payloads = []
+    filing_payloads = []
 
-                # Trigger Exit Webhook if not historical/initial seed
-                if not is_historical and not is_initial_seed:
-                    send_delta_alert(investor_name, p_ticker, p_put_call, p_sec_type, 0, p_shares, report_date, sec_url)
+    # 4. DETECT FULL EXITS
+    for (p_ticker, p_put_call, p_sec_type), p_shares in prior_tickers.items():
+        if p_shares > 0 and (p_ticker, p_put_call, p_sec_type) not in merged_portfolio:
+            print(f"  🔴 EXITED POSITION DETECTED: {p_ticker} (Was {p_shares:,} shares -> Now 0)")
+            
+            history_payloads.append({
+                "investor_id": investor_id,
+                "ticker": p_ticker,
+                "put_call": p_put_call,
+                "security_type": p_sec_type,
+                "shares_held": 0,
+                "period_of_report": report_date,
+                "filing_accession": latest_accession,
+                "data_source": "sec_edgar"
+            })
 
-    # 4. DB UPSERT & ALERTS LOOP FOR CURRENT POSITIONS
+            if not is_historical and not is_initial_seed:
+                send_delta_alert(investor_name, p_ticker, p_put_call, p_sec_type, 0, p_shares, report_date, sec_url)
+
+    # 5. PREPARE CURRENT POSITIONS
     for (ticker, put_call, sec_type), shares in merged_portfolio.items():
         instrument_label = put_call if put_call else "COMMON"
         print(f"  🔍 Processing {ticker} | Type: {instrument_label} | Total: {shares:,}")
         
-        # QUERY HISTORY: Fetch prior period for delta math
-        prev_record = supabase.table("holdings_history")\
-            .select("shares_held")\
-            .eq("investor_id", investor_id)\
-            .eq("ticker", ticker)\
-            .eq("put_call", put_call)\
-            .eq("security_type", sec_type)\
-            .lt("period_of_report", report_date)\
-            .order("period_of_report", desc=True)\
-            .limit(1).execute()
-            
-        prev_shares = prev_record.data[0]['shares_held'] if prev_record.data else 0
+        prev_shares = prior_tickers.get((ticker, put_call, sec_type), 0)
 
-        # UPSERT HISTORY
-        supabase.table("holdings_history").upsert({
+        history_payloads.append({
             "investor_id": investor_id,
             "ticker": ticker,
             "put_call": put_call,
@@ -235,10 +223,9 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
             "period_of_report": report_date,
             "filing_accession": latest_accession,
             "data_source": "sec_edgar"
-        }, on_conflict="investor_id, ticker, period_of_report, filing_accession, put_call, security_type").execute()
+        })
 
-        # UPSERT FILINGS
-        filing_response = supabase.table("filings").upsert({
+        filing_payloads.append({
             "investor_id": investor_id,
             "filing_accession": latest_accession,
             "ticker": ticker,
@@ -247,28 +234,45 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
             "shares_held": shares,
             "report_date": report_date,
             "data_source": "sec_edgar"
-        }, on_conflict="investor_id, filing_accession, ticker, put_call, security_type").execute()
+        })
 
-        # UPSERT METRICS
-        vol_90d = get_real_volatility(ticker)
-        is_estimated = vol_90d is None
-        
-        if filing_response.data:
-            supabase.table("metrics").upsert({
-                "filing_id": filing_response.data[0]['id'], 
-                "ticker": ticker, 
-                "volatility_90d": vol_90d if vol_90d else 0.0,
-                "vol_is_estimated": is_estimated
-            }, on_conflict="filing_id, ticker").execute()
-
-        # FIRE WEBHOOK: Suppress if historical or during initial baseline seeding
         if not is_historical and not is_initial_seed:
             send_delta_alert(investor_name, ticker, put_call, sec_type, shares, prev_shares, report_date, sec_url)
 
+    # 6. BATCH EXECUTION (Prevents 522 Cloudflare Timeouts)
+    chunk_size = 200
+    if history_payloads:
+        print(f"  ⚡ Pushing {len(history_payloads)} history records to database in chunks...")
+        
+    for i in range(0, len(history_payloads), chunk_size):
+        h_chunk = history_payloads[i:i+chunk_size]
+        try:
+            supabase.table("holdings_history").upsert(h_chunk, on_conflict="investor_id, ticker, period_of_report, filing_accession, put_call, security_type").execute()
+        except Exception as e:
+            print(f"  ❌ History Batch Error: {e}")
+
+    for i in range(0, len(filing_payloads), chunk_size):
+        f_chunk = filing_payloads[i:i+chunk_size]
+        try:
+            f_res = supabase.table("filings").upsert(f_chunk, on_conflict="investor_id, filing_accession, ticker, put_call, security_type").execute()
+            if f_res.data:
+                metrics = []
+                for row in f_res.data:
+                    vol = get_real_volatility(row['ticker'])
+                    metrics.append({
+                        "filing_id": row['id'], 
+                        "ticker": row['ticker'], 
+                        "volatility_90d": vol if vol else 0.0, 
+                        "vol_is_estimated": vol is None
+                    })
+                if metrics:
+                    supabase.table("metrics").upsert(metrics, on_conflict="filing_id, ticker").execute()
+        except Exception as e:
+            print(f"  ❌ Filings/Metrics Batch Error: {e}")
+
 def run_pipeline():
-    print("=== STARTING STRICT SEC EDGAR INGESTION PIPELINE ===")
+    print("=== STARTING BATCH-OPTIMIZED SEC EDGAR INGESTION PIPELINE ===")
     
-    # Fix P0: Target precise regulatory schema rather than loose market string
     investors = supabase.table("investors").select("*").eq("disclosure_regime", "13F_FILER").execute().data
 
     if not investors:
@@ -279,7 +283,6 @@ def run_pipeline():
         print(f"\n--------------------------------------------------")
         print(f"📡 Processing {investor['name']} | Regime: {investor['disclosure_regime']}")
         
-        # Fix P0: Guard against missing CIKs causing silent crashes
         if not investor.get('cik'):
             print(f"  ⚠️ {investor['name']} is 13F_FILER but has no CIK on file. Skipping.")
             continue
@@ -309,7 +312,7 @@ def run_pipeline():
         except Exception as e:
             print(f"❌ SEC Fetch Error for {investor['name']}: {e}")
 
-    print("\n=== 🎉 SEC INGESTION PIPELINE COMPLETED SUCCESSFULLY ===")
+    print("\n=== 🎉 SEC BATCH INGESTION PIPELINE COMPLETED SUCCESSFULLY ===")
 
 if __name__ == "__main__":
     run_pipeline()
