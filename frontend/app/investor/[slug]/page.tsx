@@ -281,7 +281,16 @@ export default function InvestorDeepDive() {
 
                       return (
                         <tr key={filing.id} className="border-b border-gray-800 hover:bg-gray-800/25 transition-colors">
-                          <td className="px-6 py-4 font-bold text-blue-400 font-mono">${filing.ticker}</td>
+                          <td className="px-6 py-4">
+                            <div className="flex flex-col">
+                              <span className="font-bold text-blue-400 font-mono">${filing.ticker}</span>
+                              {filing.asset_name && (
+                                <span className="text-[10px] text-gray-500 font-sans truncate max-w-[200px]" title={filing.asset_name}>
+                                  {filing.asset_name}
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           
                           <td className="px-6 py-4">
                             {isPut ? (
@@ -430,14 +439,19 @@ export default function InvestorDeepDive() {
               
               <div className="flex justify-between items-start border-b border-gray-800 pb-4 mb-4 shrink-0">
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-2xl font-bold text-white">${selectedFiling.ticker}</h3>
-                    {selectedFiling.put_call && (
-                      <span className={`border text-xs font-mono font-bold px-2 py-0.5 rounded ${
-                        selectedFiling.put_call === 'PUT' ? 'bg-red-950 text-red-400 border-red-800' : 'bg-emerald-950 text-emerald-400 border-emerald-800'
-                      }`}>
-                        {selectedFiling.put_call} OPTION
-                      </span>
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-2xl font-bold text-white">${selectedFiling.ticker}</h3>
+                      {selectedFiling.put_call && (
+                        <span className={`border text-xs font-mono font-bold px-2 py-0.5 rounded ${
+                          selectedFiling.put_call === 'PUT' ? 'bg-red-950 text-red-400 border-red-800' : 'bg-emerald-950 text-emerald-400 border-emerald-800'
+                        }`}>
+                          {selectedFiling.put_call} OPTION
+                        </span>
+                      )}
+                    </div>
+                    {selectedFiling.asset_name && (
+                      <span className="text-sm text-gray-400 mt-1 font-sans">{selectedFiling.asset_name}</span>
                     )}
                   </div>
                   <div className="mt-2 inline-flex items-center gap-2 text-[10px] uppercase font-mono bg-gray-950 border border-gray-800 text-gray-400 px-2.5 py-1 rounded">
