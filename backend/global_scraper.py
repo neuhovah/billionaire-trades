@@ -28,7 +28,19 @@ TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID")
 if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
     raise ValueError("CRITICAL: Telegram credentials missing. Update .env file.")
 
-def send_delta_alert(investor_name: str, ticker: str, put_call: str, sec_type: str, current_shares: int, prev_shares: int, report_date: str, sec_url: str):
+def get_sec_ticker_map():
+    """Fetches official SEC mapping of Tickers to Company Names."""
+    headers = {"User-Agent": "Nsikan Eno Uso-essien admin@uyologistics.com"}
+    try:
+        res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
+        if res.status_code == 200:
+            data = res.json()
+            return {item['ticker']: item['title'] for item in data.values()}
+    except Exception as e:
+        print(f"  ⚠️ Failed to load SEC ticker map: {e}")
+    return {}
+
+def send_delta_alert(investor_name: str, ticker: str, asset_name: str, put_call: str, sec_type: str, current_shares: int, prev_shares: int, report_date: str, sec_url: str):
     if current_shares == prev_shares:
         return
 
@@ -42,6 +54,9 @@ def send_delta_alert(investor_name: str, ticker: str, put_call: str, sec_type: s
         action = f"🟢 ADDED (+{pct:.1f}%)" if diff > 0 else f"🔴 TRIMMED ({pct:.1f}%)"
 
     asset_display = f"${ticker}"
+    if asset_name:
+        asset_display += f" ({asset_name})"
+        
     shares_label = "Shares"
     
     if put_call:
@@ -68,14 +83,13 @@ def send_delta_alert(investor_name: str, ticker: str, put_call: str, sec_type: s
         "disable_web_page_preview": True
     }
     
-    # Resilient Retry Loop to prevent 429 Rate-Limits & 502 Bad Gateway failures
     max_retries = 3
     for attempt in range(max_retries):
         try:
             response = requests.post(url, json=payload, timeout=12)
             if response.status_code == 200:
                 print(f"  📢 Alert Broadcasted: {investor_name} {action} {asset_display}")
-                time.sleep(1.2)  # Controlled rate-limit delay
+                time.sleep(1.2)
                 return
             elif response.status_code == 429:
                 retry_after = response.json().get("parameters", {}).get("retry_after", 5)
@@ -93,12 +107,10 @@ def send_delta_alert(investor_name: str, ticker: str, put_call: str, sec_type: s
 
 def get_real_volatility(ticker: str):
     try:
-        # Standardize dual-class tickers for Yahoo Finance (e.g., LENB -> LEN-B)
         yf_ticker = ticker
         if len(ticker) == 5 and ticker.endswith(('A', 'B', 'K')):
             yf_ticker = f"{ticker[:-1]}-{ticker[-1]}"
             
-        # Suppress yfinance stdout/stderr printing
         with contextlib.redirect_stderr(io.StringIO()):
             stock = yf.Ticker(yf_ticker)
             hist = stock.history(period="90d")
@@ -112,8 +124,7 @@ def get_real_volatility(ticker: str):
     except Exception:
         return None
 
-def process_merged_portfolio(investor_id, investor_name, cik, target_filings, latest_period):
-    """Processes base filings and amendments chronologically to build a unified portfolio view."""
+def process_merged_portfolio(investor_id, investor_name, cik, target_filings, latest_period, ticker_map):
     merged_portfolio = {}
     latest_accession = target_filings[-1].accession_no
     report_date = str(latest_period)
@@ -127,7 +138,6 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
     clean_accession = latest_accession.replace("-", "")
     sec_url = f"https://www.sec.gov/Archives/edgar/data/{str(cik).lstrip('0')}/{clean_accession}/{latest_accession}-index.html"
 
-    # Check database to see if history exists for this investor (Initial Seeding Protection)
     existing_history_count = supabase.table("holdings_history")\
         .select("id", count="exact")\
         .eq("investor_id", investor_id)\
@@ -137,7 +147,6 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
     if is_initial_seed:
         print(f"  🌱 Initial Seeding detected for {investor_name}. Suppressing bulk initial alerts.")
 
-    # 1. MERGE LOGIC: Chronologically overlay base filings and amendments
     for filing in target_filings:
         try:
             holdings = filing.obj().holdings
@@ -167,10 +176,8 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
         except Exception as e:
             print(f"  ⚠️ Error parsing holdings for accession {filing.accession_no}: {e}")
 
-    # 2. STATE CLEANUP: Purge current snapshot view to mirror unified portfolio
     supabase.table("filings").delete().eq("investor_id", investor_id).execute()
 
-    # 3. BULK MEMORY CACHE OF PRIOR POSITIONS (Eliminates 1000s of API queries)
     prior_period_query = supabase.table("holdings_history")\
         .select("ticker, put_call, security_type, shares_held")\
         .eq("investor_id", investor_id)\
@@ -188,14 +195,16 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
     history_payloads = []
     filing_payloads = []
 
-    # 4. DETECT FULL EXITS
     for (p_ticker, p_put_call, p_sec_type), p_shares in prior_tickers.items():
         if p_shares > 0 and (p_ticker, p_put_call, p_sec_type) not in merged_portfolio:
             print(f"  🔴 EXITED POSITION DETECTED: {p_ticker} (Was {p_shares:,} shares -> Now 0)")
             
+            asset_name = ticker_map.get(p_ticker, "")
+
             history_payloads.append({
                 "investor_id": investor_id,
                 "ticker": p_ticker,
+                "asset_name": asset_name,
                 "put_call": p_put_call,
                 "security_type": p_sec_type,
                 "shares_held": 0,
@@ -205,18 +214,19 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
             })
 
             if not is_historical and not is_initial_seed:
-                send_delta_alert(investor_name, p_ticker, p_put_call, p_sec_type, 0, p_shares, report_date, sec_url)
+                send_delta_alert(investor_name, p_ticker, asset_name, p_put_call, p_sec_type, 0, p_shares, report_date, sec_url)
 
-    # 5. PREPARE CURRENT POSITIONS
     for (ticker, put_call, sec_type), shares in merged_portfolio.items():
         instrument_label = put_call if put_call else "COMMON"
         print(f"  🔍 Processing {ticker} | Type: {instrument_label} | Total: {shares:,}")
         
         prev_shares = prior_tickers.get((ticker, put_call, sec_type), 0)
+        asset_name = ticker_map.get(ticker, "")
 
         history_payloads.append({
             "investor_id": investor_id,
             "ticker": ticker,
+            "asset_name": asset_name,
             "put_call": put_call,
             "security_type": sec_type,
             "shares_held": shares,
@@ -229,6 +239,7 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
             "investor_id": investor_id,
             "filing_accession": latest_accession,
             "ticker": ticker,
+            "asset_name": asset_name,
             "put_call": put_call,
             "security_type": sec_type,
             "shares_held": shares,
@@ -237,9 +248,8 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
         })
 
         if not is_historical and not is_initial_seed:
-            send_delta_alert(investor_name, ticker, put_call, sec_type, shares, prev_shares, report_date, sec_url)
+            send_delta_alert(investor_name, ticker, asset_name, put_call, sec_type, shares, prev_shares, report_date, sec_url)
 
-    # 6. BATCH EXECUTION (Prevents 522 Cloudflare Timeouts)
     chunk_size = 200
     if history_payloads:
         print(f"  ⚡ Pushing {len(history_payloads)} history records to database in chunks...")
@@ -272,6 +282,10 @@ def process_merged_portfolio(investor_id, investor_name, cik, target_filings, la
 
 def run_pipeline():
     print("=== STARTING BATCH-OPTIMIZED SEC EDGAR INGESTION PIPELINE ===")
+    
+    print("Fetching SEC Ticker-to-Name Mapping...")
+    ticker_map = get_sec_ticker_map()
+    print(f"Loaded {len(ticker_map)} ticker mappings.")
     
     investors = supabase.table("investors").select("*").eq("disclosure_regime", "13F_FILER").execute().data
 
@@ -307,7 +321,7 @@ def run_pipeline():
             target_filings = [f for f in all_filings if f.period_of_report == latest_period]
             target_filings.sort(key=lambda x: str(x.filing_date))
             
-            process_merged_portfolio(investor['id'], investor['name'], investor['cik'], target_filings, latest_period)
+            process_merged_portfolio(investor['id'], investor['name'], investor['cik'], target_filings, latest_period, ticker_map)
             
         except Exception as e:
             print(f"❌ SEC Fetch Error for {investor['name']}: {e}")
