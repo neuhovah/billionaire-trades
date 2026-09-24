@@ -285,7 +285,7 @@ export default function InvestorDeepDive() {
                             <div className="flex flex-col">
                               <span className="font-bold text-blue-400 font-mono">${filing.ticker}</span>
                               {filing.asset_name && (
-                                <span className="text-[10px] text-gray-500 font-sans truncate max-w-[200px]" title={filing.asset_name}>
+                                <span className="text-[10px] text-gray-500 font-sans truncate max-w-50" title={filing.asset_name}>
                                   {filing.asset_name}
                                 </span>
                               )}
